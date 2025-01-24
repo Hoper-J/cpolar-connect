@@ -1,0 +1,9 @@
+# cpolar
+cpolar_username = your_cpolar_username
+cpolar_password = your_cpolar_password
+
+# server
+server_user     = your_server_user
+server_password = 
+ssh_key_path    = ~/.ssh/id_rsa_server
+ssh_host_alias  = server
