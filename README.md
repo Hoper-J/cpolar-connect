@@ -1,5 +1,11 @@
-- **本项目基于 cpolar 免费版，提供简单的内网穿透解决方案**。
-  - 由于 cpolar 免费版的 `host` 和 `port` 会不定期变更，手动更新信息较为繁琐。本项目将通过自动化脚本解决这一问题。
+<div align="center">
+
+中文 | [English](./README_en.md)
+
+</div>
+
+- **本仓库基于 cpolar 免费版，提供简单的内网穿透解决方案**。
+  - 由于 cpolar 免费版的 `host` 和 `port` 会不定期变更，手动更新信息较为繁琐。本仓库将通过自动化脚本解决这一问题。
 - **脚本将自动更新客户端的配置文件，以实现远程访问和免密码 SSH 登录**。具体步骤如下：
   - 登录 cpolar，获取隧道信息。
   - 检测本地 SSH 密钥，如果不存在则自动生成。
@@ -9,13 +15,14 @@
 
 ---
 
-## 运行
+## 快速开始
 
 > **关于服务器和客户端的定义**
 >
-> 为便于理解，假设一个常见场景：「你在家使用笔记本电脑」远程连接到「实验室拥有显卡的台式机」。在本项目中，远程台式机称为「服务器」，而你的笔记本则称为「客户端」。
+> 为便于理解，假设一个常见场景：「你在家使用笔记本电脑」远程连接到「实验室拥有显卡的台式机」。在本仓库中，远程台式机称为「服务器」，而你的笔记本则称为「客户端」。
 
-### 服务器
+<details>
+    <summary> <h3> 服务器配置 </h3> </summary>
 
 请根据对应的系统遵循[官方文档](https://www.cpolar.com/docs)进行配置，这里给出 Linux 的配置方式：
 
@@ -33,7 +40,7 @@
      curl -sL https://git.io/cpolar | sudo bash
      ```
 
-2. #### Token 认证
+2. **Token 认证**
 
    访问 cpolar：[https://dashboard.cpolar.com/signup](https://dashboard.cpolar.com/signup)，先注册好一个账号（无需验证邮箱和手机号），然后进行登录。
 
@@ -69,10 +76,11 @@
 
 > **【可选】查看公网地址和端口号（服务器/客户端）**
 >
-> 你可以通过以下两种方式查看内网穿透状态：
+> 你可以通过以下三种方式查看内网穿透状态：
 >
-> 1.	服务器用浏览器访问 [127.0.0.1:9200](http://127.0.0.1:9200/#/dashboard)，登录本地 cpolar web-ui 管理界面
-> 2.	客户端直接访问 https://dashboard.cpolar.com/status，查看隧道名为 `ssh` 对应的 URL。
+> 1. 服务器用浏览器访问 [127.0.0.1:9200](http://127.0.0.1:9200/#/dashboard)，登录本地 cpolar web-ui 管理界面
+> 2. 客户端直接访问 [https://dashboard.cpolar.com/status](https://dashboard.cpolar.com/status)，查看隧道名为 `ssh` 对应的 URL。
+> 3. 直接运行 script.py（位于客户端部分）。
 >
 > **示例：**
 >
@@ -80,9 +88,11 @@
 > - 公网地址：`3.tcp.vip.cpolar.cn`
 > - 端口号：`10387`
 
-### 客户端
+</details>
 
-1. **克隆项目**
+### 客户端配置
+
+1. **克隆仓库**
 
    ```bash
    git clone https://github.com/Hoper-J/QuickTunnel
