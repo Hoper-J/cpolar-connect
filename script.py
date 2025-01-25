@@ -114,6 +114,22 @@ def get_target_string(session, status_url):
         logger.error("未找到隧道信息，可能未激活或页面结构变化。")
         raise Exception("未找到隧道信息，可能未激活或页面结构变化。")
 
+def get_authtoken(session, auth_url):
+    """
+    登录成功后，访问 auth 页面，解析得到 authtoken 的值
+    """
+    response = session.get(auth_url)
+    if response.status_code != 200:
+        logger.error(f"获取 auth 页面失败，状态码：{response.status_code}")
+        raise Exception(f"获取 auth 页面失败，状态码：{response.status_code}")
+    
+    soup = BeautifulSoup(response.text, 'html.parser')
+    authtoken_input = soup.find("input", {"id": "authtoken"})
+    if not authtoken_input:
+        raise Exception("未能在 auth 页面找到 authtoken 字段，请检查页面结构。")
+    
+    return authtoken_input.get("value")
+
 def extract_hostname_and_port(target_string):
     """
     提取 tcp://xxx:port 的 HostName 和 Port
@@ -383,6 +399,8 @@ def main():
     login_page_url = "https://dashboard.cpolar.com/login"
     login_url      = "https://dashboard.cpolar.com/login"
     status_url     = "https://dashboard.cpolar.com/status"
+    # 用于获取 authtoken
+    auth_url       = "https://dashboard.cpolar.com/auth"
 
     csrf_token = get_csrf_token(
         session,
@@ -396,12 +414,16 @@ def main():
         csrf_token
     )
 
+    # TODO：考虑使用不同的参数 --server 和 --client 进行设置而非拆分为两个文件
+    # authtoken 仅使用在服务器端，暂时放置在此
+    authtoken = get_authtoken(session, auth_url)
+    logger.info(f"获取到的 authtoken = {authtoken}")
+    
     target_string = get_target_string(
         session,
         status_url
     )
     hostname, port = extract_hostname_and_port(target_string)
-
 
     # 本地生成 SSH 密钥(如果没有)
     generate_ssh_key_if_not_exists(
@@ -448,4 +470,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

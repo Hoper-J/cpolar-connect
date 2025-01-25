@@ -6,7 +6,7 @@
 
 ## 项目简介
 
-当前项目将帮助你快速配置通过 cpolar 服务实现的远程访问和免密码 SSH 登录。具体步骤如下：
+当前项目将自动配置客户端的 cpolar 服务，以实现远程访问和免密码 SSH 登录。具体步骤如下：
 
 - 登录 cpolar，获取隧道信息。
 - 检测本地 SSH 密钥，如果不存在则自动生成。
@@ -20,9 +20,15 @@
 脚本依赖一个配置文件 `config.txt`：
 
 ```txt
+# 请正确填充
 cpolar_username = your_cpolar_username
 cpolar_password = your_cpolar_password
 server_user     = your_server_user
+
+# 需要映射的端口号，默认为空（多个端口号之间请使用 "," 隔开）
+ports = []
+
+# 以下配置可以不做修改，并不影响最终结果
 server_password = 
 ssh_key_path    = ~/.ssh/id_rsa_server
 ssh_host_alias  = server
@@ -30,11 +36,10 @@ ssh_host_alias  = server
 
 ### 参数说明
 
-- `cpolar_username` / `cpolar_password`：您在 cpolar 平台的登录账号和密码。
-- `server_user` / `server_password`：远程服务器的 SSH 用户名和密码，密码可以不在配置文件中明文写出，如果不提供，脚本会提示用户输入。
-- **以下两项无需修改**：
-  - `ssh_key_path`：SSH 私钥的存储路径。
-  - `ssh_host_alias`：本地 SSH 配置的别名，用于简化连接命令。
+- `cpolar_username` / `cpolar_password`：cpolar 平台的登录账号和密码。
+- `server_user` / `server_password`：远程服务器的 SSH 用户名和密码，密码可以不在配置文件中明文写出，如果不提供，脚本会提示输入。
+- `ssh_key_path`：SSH 私钥的存储路径。
+- `ssh_host_alias`：本地 SSH 配置的别名，用于简化连接命令。
 
 ## 如何运行
 
@@ -79,6 +84,8 @@ ssh_host_alias  = server
 - 兼容 Windows 系统
 - 完善 README
 - 当前脚本仅存在自动更新，还需要在每次连接前调用该脚本（使用 alias）
+  - 自动映射对应的端口
+
 
 ---
 
