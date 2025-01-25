@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import argparse
 import os
 import re
 import stat
+import subprocess
 import logging
 import requests
-from bs4 import BeautifulSoup
 import paramiko
+from bs4 import BeautifulSoup
 from getpass import getpass
 
 
@@ -31,10 +33,12 @@ def load_config(config_path):
     格式示例：
         cpolar_username = your_cpolar_username
         cpolar_password = your_cpolar_password
-        server_user     = ubuntu
+        server_user     = your_server_user
         server_password = your_server_password
         ssh_key_path    = ~/.ssh/id_rsa_server
         ssh_host_alias  = server
+        ports           = 8888,6666
+        auto_connect    = true
     """
     if not os.path.exists(config_path):
         logger.error(f"配置文件 {config_path} 不存在，请检查路径。")
@@ -171,7 +175,7 @@ def generate_ssh_key_if_not_exists(private_key_path, comment="generated-by-scrip
         with open(pub_path, "w", encoding="utf-8") as pub_file:
             pub_file.write(public_key_text + "\n")
         logger.info(f"已生成新的 SSH 密钥对: 私钥={private_key_path}, 公钥={pub_path}")
-
+        
 def test_ssh_connection(hostname, port, username, key_path, timeout=10):
     """
     尝试使用 SSH 密钥连接到远程服务器。
@@ -280,6 +284,7 @@ def update_or_create_host_block(ssh_config_path, host_alias, hostname, port, use
     - 如果文件不存在，先创建。
     - 如果不存在 Host <alias> 块，追加新块。
     - 如果已存在，则只更新 HostName, Port, User, IdentityFile, PreferredAuthentications。
+    - 端口号不在此构建，而是显式的使用 ssh -L 命令
     """
     ssh_config_path = os.path.expanduser(ssh_config_path)
     ensure_ssh_config_exists(ssh_config_path)
@@ -374,8 +379,28 @@ def update_or_create_host_block(ssh_config_path, host_alias, hostname, port, use
     else:
         logger.info(f"Host {host_alias} 配置与当前一致，无需更新。")
 
+# ------------------- 询问是否连接 -------------------
+def prompt_user_to_connect():
+    """
+    询问用户是否连接到服务器，返回 True 或 False
+    """
+    while True:
+        choice = input("是否要通过 SSH 连接到服务器并进行端口转发？[y/N]: ").strip().lower()
+        if choice in ['y', 'yes']:
+            return True
+        elif choice in ['n', 'no', '']:
+            return False
+        else:
+            logger.warning("无效输入，请输入 'y' 或 'n'。")
+            
 # ------------------- 主流程 -------------------
 def main():
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="QuickTunnel - 内网穿透脚本")
+    parser.add_argument('--auto_connect', action='store_true', help='自动连接到服务器，无需询问')
+    args = parser.parse_args()
+
+    
     # 读取配置
     config_path = os.path.expanduser("./config.txt")
     config = load_config(config_path)
@@ -464,8 +489,43 @@ def main():
         identity_file=os.path.expanduser(ssh_key_path)
     )
 
-    logger.info("一切就绪！使用以下命令免密登录到服务器：")
-    logger.info(f"\tssh {host_alias}")
+    # 获取当前需要映射的端口号
+    ports_config = config.get("ports", "8888,6006")
+    ports = [port.strip() for port in ports_config.split(",") if port.strip().isdigit()]
+    if not ports:
+        logger.error("配置文件中的 ports 格式不正确，应为多个端口号用逗号分隔，例如: ports = 8888,6006")
+        raise Exception("配置文件中的 ports 格式不正确，应为多个端口号用逗号分隔，例如: ports = 8888,6006")
+    logger.info(f"当前需要映射的端口号: {', '.join(ports)}")
+    
+    # 构建 SSH 命令，添加多个 -L 端口转发选项
+    port_forward_options = " ".join([f"-L{port}:localhost:{port}" for port in ports])
+    ssh_command = f"ssh {port_forward_options} {host_alias}"
+
+    # 确定是否需要自动连接
+    if args.auto_connect:
+        should_connect = True
+        logger.info("检测到命令行参数 --auto_connect，自动连接服务器。")
+    else:
+        # 读取 config 中的 auto_connect 配置
+        auto_connect_config = config.get("auto_connect", "no").lower()
+        if auto_connect_config in ["yes", "y", "true", "1"]:
+            should_connect = True
+            logger.info("遵循配置文件中的设置，自动连接服务器。")
+        else:
+            should_connect = False
+            logger.info("遵循配置文件中的设置，不自动连接服务器。")
+
+    if should_connect:
+        logger.info("一切就绪！即将通过 SSH 连接到服务器...")
+        logger.info(f"执行命令: {ssh_command}")
+        try:
+            subprocess.run(ssh_command, shell=True, check=True)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"SSH 连接失败: {e}")
+            sys.exit(1)
+    else:
+        logger.info("一切就绪！请使用以下命令免密登录到服务器（-L为映射的端口号）：")
+        logger.info(f"\t{ssh_command}")
 
 
 if __name__ == "__main__":
