@@ -60,11 +60,11 @@ def load_config(config_path):
     return config
 
 # ------------------- 获取 cpolar 映射信息 -------------------
-def get_csrf_token(session, login_page_url):
+def get_csrf_token(session, login_url):
     """
     通过 GET 请求登录页，解析出 csrf_token
     """
-    response = session.get(login_page_url)
+    response = session.get(login_url)
     if response.status_code != 200:
         logger.error(f"获取登录页面失败，状态码：{response.status_code}")
         raise Exception(f"获取登录页面失败，状态码：{response.status_code}")
@@ -383,12 +383,11 @@ def prepare_connection(session, cpolar_username, cpolar_password, server_user, s
     """
     登录 cpolar，获取隧道信息，生成 SSH 密钥，测试连接，上传公钥（如果需要），更新 SSH 配置
     """
-    login_page_url = "https://dashboard.cpolar.com/login"
     login_url      = "https://dashboard.cpolar.com/login"
     status_url     = "https://dashboard.cpolar.com/status"
     auth_url       = "https://dashboard.cpolar.com/auth"
 
-    csrf_token = get_csrf_token(session, login_page_url)
+    csrf_token = get_csrf_token(session, login_url)
     do_login(session, login_url, cpolar_username, cpolar_password, csrf_token)
 
     authtoken = get_authtoken(session, auth_url)
