@@ -11,7 +11,7 @@
   - Check for local SSH keys, and automatically generate them if they don’t exist.
   - Upload the public key to the remote server to enable password-free login.
   - Update the local `~/.ssh/config` file to simplify SSH connection configurations.
-- **Currently tested only on Mac/Linux systems.**
+- **Currently tested only on Windows/Mac/Linux systems.**
 
 ------
 
@@ -94,6 +94,9 @@ Please refer to the [official documentation](https://www.cpolar.com/docs) for co
 </details>
 
 ### Client Configuration
+
+<details>
+    <summary> <h4> Linux / Mac </h4> </summary>
 
 1. **Clone the Repository**
 
@@ -202,8 +205,6 @@ Once the alias is set up, you can run the script from any directory using the fo
 tunnel
 ```
 
-------
-
 > [!note]
 >
 > **Change the Alias Name**
@@ -236,11 +237,122 @@ tunnel
 >
 > If the script is moved to a different directory, repeat the steps above to update the alias.
 
+</details>
+
+<details>
+    <summary> <h4> Windows </h4> </summary>
+
+1. **Install Git**
+
+   a. **Download Git**
+
+   Go to the [official Git download page](https://git-scm.com/download/win). The version used in this demonstration is shown in the image below:
+
+   ![Git Download Version](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203356.png)
+
+   Run the downloaded installer. You can keep all the default settings. Once the installation is complete, Git will be automatically added to the system `PATH`.
+
+   b. **Verify Installation**
+
+   Open CMD as shown below:
+
+   ![Open CMD](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203411.png)
+
+   Enter the following command to check if Git is installed successfully:
+
+   ```bash
+   git --version
+   ```
+
+   **Output:**
+
+   ![Git Version Output](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203403.png)
+
+   c. **Clone the Repository**
+
+   Run the following commands to clone the repository:
+
+   ```bash
+   git clone https://github.com/Hoper-J/CpolarAutoUpdater
+   cd CpolarAutoUpdater
+   ```
+
+   ![Git Clone Example](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203406.png)
+
+2. **Install Python**
+
+   a. **Download Python**
+
+   Visit the [official Python download page](https://www.python.org/downloads/windows/) and select any version (this demonstration uses Python 3.12.8). Run the downloaded installer. Be sure to check the option `Add python.exe to PATH` and click `Install Now` to complete the installation.
+
+   ![Python Install Example](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203409.png)
+
+   b. **Verify Installation**
+
+   Open CMD and enter the following command to verify the Python installation:
+
+   ```bash
+   python --version
+   ```
+
+   **Output:**
+
+   ![Python Version Output](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203416.png)
+
+   c. **Environment Setup**
+
+   Install the required dependencies using pip:
+
+   ```bash
+   pip install paramiko requests beautifulsoup4
+   ```
+
+3. **Configuration File**
+
+   Fill in your cpolar username/password and the server username (retrieved using `whoami`) in the `config.txt` file:
+
+   ```txt
+   # Please fill in the details correctly
+   cpolar_username = your_cpolar_username
+   cpolar_password = your_cpolar_password
+   server_user     = your_server_user
+   
+   # Custom settings
+   ports           = 8888, 6666
+   auto_connect    = True
+   
+   # The following settings can be left as is
+   server_password = 
+   ssh_key_path    = ~/.ssh/id_rsa_server
+   ssh_host_alias  = server
+   ```
+
+   **Parameter Descriptions**
+
+   - `cpolar_username` / `cpolar_password`: Your cpolar account credentials.
+   - `server_user` / `server_password`: The SSH username and password for the remote server. You can leave the password blank; the script will prompt for input if not provided.
+   - `ports`: Ports to be mapped. Defaults to `8888` and `6006`. Use commas (`,`) to separate multiple ports.
+   - `auto_connect`: Determines whether the script automatically connects to the server after running. Defaults to `True`. Set to `False` to disable automatic connection.
+   - `ssh_key_path`: Path for storing the SSH private key. If the key does not exist, it will be automatically created.
+   - `ssh_host_alias`: Alias for the SSH host in the client configuration, simplifying connection commands.
+
+4. **Run the Script**
+
+   Run the following command to execute the script:
+
+   ```bash
+   python auto_tunnel.py
+   ```
+
+   The script will automatically connect to the server. Press `Ctrl+D` to exit.
+
+</details>
+
 ## Side Note
 
 It’s important to note that this script is not an out-of-the-box solution and relies on the following prerequisites:
 
 1. **cpolar** has been properly configured on the server side.
-2. **Python** is installed on the client side.
+2. The client environment must have **Git**, **Python**, and **SSH** installed.
 
-> At this stage, no Shell script has been developed. This script was originally created to address personal needs during earlier challenges and is now being shared for others to reference and use.
+> Currently, no compatible Shell script has been developed. This script was originally created to address personal needs during earlier challenges and is now being shared for others to reference and use.

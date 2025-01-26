@@ -11,7 +11,7 @@
   - 检测本地 SSH 密钥，如果不存在则自动生成。
   - 上传公钥到远程服务器，实现免密登录。
   - 更新本地 `~/.ssh/config`，简化 SSH 连接配置。
-- **目前仅测试在 Mac/Linux 下运行。**
+- **目前仅测试在 Windows/Mac/Linux 下运行。**
 
 ---
 
@@ -91,6 +91,9 @@
 </details>
 
 ### 客户端配置
+
+<details>
+    <summary> <h4> Linux / Mac </h4> </summary>
 
 1. **克隆仓库**
 
@@ -230,11 +233,116 @@ tunnel
 >
 > 如果脚本被移动到其他目录，请重复上述步骤更新别名。
 
+</details>
+
+<details>
+    <summary> <h4> Windows </h4> </summary>
+
+1. **安装 Git**
+
+   a. **下载 Git**
+
+   前往 [Git 官方下载页面](https://git-scm.com/download/win)，当前演示的下载版本如图所示：
+
+   ![image-20250126201020441](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203356.png)
+
+   然后直接运行下载的安装程序，可以全部保持默认设置进行，Git 在安装完成后会自动添加到系统 `PATH`。
+
+   b. **验证安装**
+
+   如图所示，打开 CMD：
+
+   ![image-20250126195828535](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203411.png)
+
+   输入以下命令验证 Git 是否安装成功：
+
+   ```bash
+   git --version
+   ```
+
+   **输出**：
+
+   ![image-20250126201550164](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203403.png)
+
+   c. **克隆仓库**
+
+   ```bash
+   git clone https://github.com/Hoper-J/CpolarAutoUpdater
+   cd CpolarAutoUpdater
+   ```
+
+   ![image-20250126201831632](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203406.png)
+
+2. **安装 Python**
+
+   a. **下载 Python**
+
+   前往 [Python 官方下载页面](https://www.python.org/downloads/windows/)，选择任意版本（当前演示版本为 3.12.8）。然后直接运行下载的安装程序，注意勾选 `Add python.exe to PATH`，点击 `Install Now` 完成安装。
+
+   ![image-20250126195543694](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203409.png)
+
+   b. **验证安装**
+
+   在 CMD 中输入以下命令验证 Python 是否安装成功：
+
+   ```bash
+   python --version
+   ```
+
+   **输出**：
+
+   ![image-20250126200226446](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203416.png)
+
+   c. **环境配置**
+
+   ```bash
+   pip install paramiko requests beautifulsoup4
+   ```
+
+3. **配置文件**
+
+   将 cpolar 的账号/密码以及服务器端的用户名（通过 `whoami` 获取）填充至配置文件 `config.txt` 中：
+
+   ```txt
+   # 请正确填充
+   cpolar_username = your_cpolar_username
+   cpolar_password = your_cpolar_password
+   server_user     = your_server_user
+   
+   # 自定义
+   ports           = 8888, 6666
+   auto_connect    = True
+   
+   # 以下配置可以不做修改，并不影响最终结果
+   server_password = 
+   ssh_key_path    = ~/.ssh/id_rsa_server
+   ssh_host_alias  = server
+   ```
+
+   **参数说明**
+
+   - `cpolar_username` / `cpolar_password`：cpolar 平台的登录账号和密码。
+   - `server_user` / `server_password`：远程服务器的 SSH 用户名和密码，密码可以不在配置文件中明文写出，如果不提供，脚本会提示输入。
+   - `ports`：需要映射的端口号，默认为 8888 和 6006 端口（多个端口号之间需要使用英文逗号 "," 隔开）。
+   - `auto_connect`：决定运行脚本后是否自动连接到服务器，默认为 `True`，运行脚本后自动连接到服务器。设置为 `False` 则不自动连接。
+   - `ssh_key_path`：SSH 私钥的存储路径，如果不存在该私钥则自动创建到该路径。
+   - `ssh_host_alias`：本地 SSH 配置的别名，用于简化连接命令。
+
+4. **运行脚本**
+
+   ```bash
+   python auto_tunnel.py
+   ```
+
+   将自动连接到服务器，`Ctrl+D` 退出。
+
+</details>
+
 ## 题外话
 
 需要特别说明的是，当前脚本并非即开即用的完整解决方案，其使用依赖以下两个前提条件：
 
 1. 服务器端已成功配置 **cpolar**。
-2. 客户端环境中已安装 **Python**。
+2. 客户端环境已安装 **Git**、**Python** 和 **SSH**。
 
 > 目前尚未开发适配的 Shell 脚本。本脚本最初是为了应对个人需求而编写，现在整理分享出来供大家参考和使用。
