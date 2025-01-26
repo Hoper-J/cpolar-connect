@@ -155,6 +155,17 @@ def generate_ssh_key_if_not_exists(private_key_path, comment="generated-by-scrip
     如果本地没有对应的私钥文件，则生成一对 RSA 密钥
     """
     private_key_path = os.path.expanduser(private_key_path)
+    ssh_dir = os.path.dirname(private_key_path)
+    
+    # 确保 .ssh 目录存在
+    if not os.path.exists(ssh_dir):
+        try:
+            os.makedirs(ssh_dir, exist_ok=True)
+            logger.info(f"已创建目录: {ssh_dir}")
+        except Exception as e:
+            logger.error(f"无法创建目录 {ssh_dir}: {e}")
+            raise
+    
     if os.path.exists(private_key_path):
         logger.info(f"检测到已有私钥: {private_key_path}")
         pub_path = private_key_path + ".pub"
@@ -168,14 +179,18 @@ def generate_ssh_key_if_not_exists(private_key_path, comment="generated-by-scrip
         logger.info(f"未发现私钥 {private_key_path}，开始生成...")
         key = paramiko.RSAKey.generate(2048)
         key.write_private_key_file(private_key_path)
-        os.chmod(private_key_path, stat.S_IRUSR | stat.S_IWUSR)
-
+        # Windows上os.chmod可能不起作用，但可以尝试
+        try:
+            os.chmod(private_key_path, stat.S_IRUSR | stat.S_IWUSR)
+        except Exception as e:
+            logger.warning(f"无法设置文件权限: {e}")
+        
         pub_path = private_key_path + ".pub"
         public_key_text = f"ssh-rsa {key.get_base64()} {comment}"
         with open(pub_path, "w", encoding="utf-8") as pub_file:
             pub_file.write(public_key_text + "\n")
         logger.info(f"已生成新的 SSH 密钥对: 私钥={private_key_path}, 公钥={pub_path}")
-        
+
 def test_ssh_connection(hostname, port, username, key_path, timeout=10):
     """
     尝试使用 SSH 密钥连接到远程服务器。
