@@ -145,7 +145,7 @@
 4. **运行脚本**
 
    ```bash
-   python script.py
+   python auto_tunnel.py
    ```
 
    将自动连接到服务器，`Ctrl+D` 退出。
@@ -157,6 +157,78 @@
 > ```bash
 > ssh server
 > ```
+
+#### 【可选】别名设置
+
+为方便使用脚本，可以设置别名，使其在任意目录下直接执行。
+
+**先查看 Shell 类型**
+
+```bash
+echo $SHELL
+```
+
+- `/bin/bash` 表示你使用的是 Bash，配置文件为 `~/.bashrc`。
+
+- `/bin/zsh` 表示你使用的是 Zsh，配置文件为 `~/.zshrc`。
+
+**添加别名**
+
+根据你的 Shell 类型，运行以下命令：
+
+- **Bash**
+
+  ```bash
+  echo "alias tunnel='python $(pwd)/auto_tunnel.py'" >> ~/.bashrc
+  source ~/.bashrc
+  ```
+
+- **Zsh**
+
+  ```bash
+  echo "alias tunnel='python $(pwd)/auto_tunnel.py'" >> ~/.zshrc
+  source ~/.zshrc
+  ```
+
+**验证别名设置**
+
+别名设置完成后，我们可以在任意目录运行以下命令来执行脚本：
+
+```bash
+tunnel
+```
+
+> [!note]
+>
+> **更改别名名称**
+>
+> 如果不想使用 `tunnel` 作为别名，可以在上述命令中替换为你喜欢的名称。例如，将 `tunnel` 替换为 `my_tunnel`：
+>
+> ```bash
+> echo "alias my_tunnel='python $(pwd)/auto_tunnel.py'" >> ~/.bashrc
+> ```
+>
+> **删除别名**
+>
+> 如果需要删除别名，可以使用以下命令：
+>
+> - **macOS**：
+>
+>   ```bash
+>   sed -i '' '/alias tunnel/d' ~/.bashrc && source ~/.bashrc
+>   ```
+>
+> - **Linux**:
+>
+>   ```bash
+>   sed -i '/alias tunnel/d' ~/.bashrc && source ~/.bashrc
+>   ```
+>
+> 如果是 Zsh，则替换 `~/.bashrc` 为 `~/.zshrc`。
+>
+> **脚本路径更改**
+>
+> 如果脚本被移动到其他目录，请重复上述步骤更新别名。
 
 ## 题外话
 

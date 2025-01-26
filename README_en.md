@@ -148,7 +148,7 @@ Please refer to the [official documentation](https://www.cpolar.com/docs) for co
 4. **Run the Script**
 
    ```bash
-   python script.py
+   python auto_tunnel.py
    ```
 
    The script will automatically connect to the server. Press `Ctrl+D` to exit.
@@ -160,6 +160,81 @@ Please refer to the [official documentation](https://www.cpolar.com/docs) for co
 > ```bash
 > ssh server
 > ```
+
+#### [Optional] Alias Setup
+
+To make it easier to use the script, you can set up an alias so that it can be executed from any directory.
+
+**Check Your Shell Type**
+
+First, check which shell you are using:
+
+```bash
+echo $SHELL
+```
+
+- If the output is `/bin/bash`, you are using Bash, and the configuration file is `~/.bashrc`.
+- If the output is `/bin/zsh`, you are using Zsh, and the configuration file is `~/.zshrc`.
+
+**Add an Alias**
+
+Based on your shell type, run one of the following commands:
+
+- **For Bash**:
+
+  ```bash
+  echo "alias tunnel='python $(pwd)/auto_tunnel.py'" >> ~/.bashrc
+  source ~/.bashrc
+  ```
+
+- **For Zsh**:
+
+  ```bash
+  echo "alias tunnel='python $(pwd)/auto_tunnel.py'" >> ~/.zshrc
+  source ~/.zshrc
+  ```
+
+**Verify Alias Setup**
+
+Once the alias is set up, you can run the script from any directory using the following command:
+
+```bash
+tunnel
+```
+
+------
+
+> [!note]
+>
+> **Change the Alias Name**
+>
+> If you don’t want to use `tunnel` as the alias, you can replace it with any name you prefer. For example, replace `tunnel` with `my_tunnel`:
+>
+> ```bash
+> echo "alias my_tunnel='python $(pwd)/auto_tunnel.py'" >> ~/.bashrc
+> ```
+>
+> **Remove the Alias**
+>
+> If you want to delete the alias, you can use the following commands:
+>
+> - **For macOS**:
+>
+>   ```bash
+>   sed -i '' '/alias tunnel/d' ~/.bashrc && source ~/.bashrc
+>   ```
+>
+> - **For Linux**:
+>
+>   ```bash
+>   sed -i '/alias tunnel/d' ~/.bashrc && source ~/.bashrc
+>   ```
+>
+> If you are using Zsh, replace `~/.bashrc` with `~/.zshrc`.
+>
+> **Update the Alias Path**
+>
+> If the script is moved to a different directory, repeat the steps above to update the alias.
 
 ## Side Note
 
