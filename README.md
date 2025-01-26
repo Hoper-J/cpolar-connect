@@ -104,16 +104,16 @@
    将 cpolar 的账号/密码以及服务器端的用户名（通过 `whoami` 获取）填充至配置文件 `config.txt` 中：
 
    ```txt
-   # 请正确填充
+   # Please fill in the details correctly
    cpolar_username = your_cpolar_username
    cpolar_password = your_cpolar_password
    server_user     = your_server_user
    
-   # 自定义
-   ports		   = 8888, 6666
+   # Custom settings
+   ports           = 8888, 6666
    auto_connect    = True
    
-   # 以下配置可以不做修改，并不影响最终结果
+   # The following settings can be left as is
    server_password = 
    ssh_key_path    = ~/.ssh/id_rsa_server
    ssh_host_alias  = server
@@ -157,3 +157,12 @@
 > ```bash
 > ssh server
 > ```
+
+## 题外话
+
+需要特别说明的是，当前脚本并非即开即用的完整解决方案，其使用依赖以下两个前提条件：
+
+1. 服务器端已成功配置 **cpolar**。
+2. 客户端环境中已安装 **Python**。
+
+> 目前尚未开发适配的 Shell 脚本。本脚本最初是为了应对个人需求而编写，现在整理分享出来供大家参考和使用。

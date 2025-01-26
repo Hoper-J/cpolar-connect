@@ -160,3 +160,12 @@ Please refer to the [official documentation](https://www.cpolar.com/docs) for co
 > ```bash
 > ssh server
 > ```
+
+## Side Note
+
+It’s important to note that this script is not an out-of-the-box solution and relies on the following prerequisites:
+
+1. **cpolar** has been properly configured on the server side.
+2. **Python** is installed on the client side.
+
+> At this stage, no Shell script has been developed. This script was originally created to address personal needs during earlier challenges and is now being shared for others to reference and use.
