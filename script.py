@@ -379,75 +379,22 @@ def update_or_create_host_block(ssh_config_path, host_alias, hostname, port, use
     else:
         logger.info(f"Host {host_alias} 配置与当前一致，无需更新。")
 
-# ------------------- 询问是否连接 -------------------
-def prompt_user_to_connect():
+def prepare_connection(session, cpolar_username, cpolar_password, server_user, server_password, ssh_key_path, host_alias):
     """
-    询问用户是否连接到服务器，返回 True 或 False
+    登录 cpolar，获取隧道信息，生成 SSH 密钥，测试连接，上传公钥（如果需要），更新 SSH 配置
     """
-    while True:
-        choice = input("是否要通过 SSH 连接到服务器并进行端口转发？[y/N]: ").strip().lower()
-        if choice in ['y', 'yes']:
-            return True
-        elif choice in ['n', 'no', '']:
-            return False
-        else:
-            logger.warning("无效输入，请输入 'y' 或 'n'。")
-            
-# ------------------- 主流程 -------------------
-def main():
-    # 解析命令行参数
-    parser = argparse.ArgumentParser(description="QuickTunnel - 内网穿透脚本")
-    parser.add_argument('--auto_connect', action='store_true', help='自动连接到服务器，无需询问')
-    args = parser.parse_args()
-
-    
-    # 读取配置
-    config_path = os.path.expanduser("./config.txt")
-    config = load_config(config_path)
-
-    # 取 cpolar 登录信息
-    cpolar_username = config.get("cpolar_username")
-    cpolar_password = config.get("cpolar_password")
-    if not cpolar_username or not cpolar_password:
-        raise Exception("config.txt 中缺少 cpolar_username 或 cpolar_password")
-
-    # 取远程服务器登录信息(用于首次密码上传公钥)
-    server_user = config.get("server_user", "ubuntu")
-    server_password = config.get("server_password")
-
-    # SSH 私钥路径
-    ssh_key_path   = config.get("ssh_key_path", "~/.ssh/id_rsa_server")
-    host_alias     = config.get("ssh_host_alias", "server")
-
-    # 自动登录 cpolar 并获取隧道信息
-    session = requests.Session()
     login_page_url = "https://dashboard.cpolar.com/login"
     login_url      = "https://dashboard.cpolar.com/login"
     status_url     = "https://dashboard.cpolar.com/status"
-    # 用于获取 authtoken
     auth_url       = "https://dashboard.cpolar.com/auth"
 
-    csrf_token = get_csrf_token(
-        session,
-        login_page_url
-    )
-    do_login(
-        session,
-        login_url,
-        cpolar_username,
-        cpolar_password,
-        csrf_token
-    )
+    csrf_token = get_csrf_token(session, login_page_url)
+    do_login(session, login_url, cpolar_username, cpolar_password, csrf_token)
 
-    # TODO：考虑使用不同的参数 --server 和 --client 进行设置而非拆分为两个文件
-    # authtoken 仅使用在服务器端，暂时放置在此
     authtoken = get_authtoken(session, auth_url)
     logger.info(f"获取到的 authtoken = {authtoken}")
     
-    target_string = get_target_string(
-        session,
-        status_url
-    )
+    target_string = get_target_string(session, status_url)
     hostname, port = extract_hostname_and_port(target_string)
 
     # 本地生成 SSH 密钥(如果没有)
@@ -489,6 +436,32 @@ def main():
         identity_file=os.path.expanduser(ssh_key_path)
     )
 
+# ------------------- 主流程 -------------------
+def main():
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="QuickTunnel - 内网穿透脚本")
+    parser.add_argument('--auto_connect', action='store_true', help='自动连接到服务器，无需询问')
+    args = parser.parse_args()
+
+    
+    # 读取配置
+    config_path = os.path.expanduser("./config.txt")
+    config = load_config(config_path)
+
+    # 取 cpolar 登录信息
+    cpolar_username = config.get("cpolar_username")
+    cpolar_password = config.get("cpolar_password")
+    if not cpolar_username or not cpolar_password:
+        raise Exception("config.txt 中缺少 cpolar_username 或 cpolar_password")
+
+    # 取远程服务器登录信息(用于首次密码上传公钥)
+    server_user = config.get("server_user", "ubuntu")
+    server_password = config.get("server_password")
+
+    # SSH 私钥路径
+    ssh_key_path   = config.get("ssh_key_path", "~/.ssh/id_rsa_server")
+    host_alias     = config.get("ssh_host_alias", "server")
+
     # 获取当前需要映射的端口号
     ports_config = config.get("ports", "8888,6006")
     ports = [port.strip() for port in ports_config.split(",") if port.strip().isdigit()]
@@ -497,9 +470,11 @@ def main():
         raise Exception("配置文件中的 ports 格式不正确，应为多个端口号用逗号分隔，例如: ports = 8888,6006")
     logger.info(f"当前需要映射的端口号: {', '.join(ports)}")
     
-    # 构建 SSH 命令，添加多个 -L 端口转发选项
-    port_forward_options = " ".join([f"-L{port}:localhost:{port}" for port in ports])
-    ssh_command = f"ssh {port_forward_options} {host_alias}"
+    # 构建参数列表
+    ssh_args = ["ssh"]
+    for port in ports:
+        ssh_args.extend(["-L", f"{port}:localhost:{port}"])
+    ssh_args.append(host_alias)
 
     # 确定是否需要自动连接
     if args.auto_connect:
@@ -510,22 +485,51 @@ def main():
         auto_connect_config = config.get("auto_connect", "no").lower()
         if auto_connect_config in ["yes", "y", "true", "1"]:
             should_connect = True
-            logger.info("遵循配置文件中的设置，自动连接服务器。")
+            logger.info("遵循配置文件中的设置，尝试自动连接服务器。")
         else:
             should_connect = False
             logger.info("遵循配置文件中的设置，不自动连接服务器。")
 
+    session = requests.Session()
+
     if should_connect:
-        logger.info("一切就绪！即将通过 SSH 连接到服务器...")
-        logger.info(f"执行命令: {ssh_command}")
+        logger.info(f"执行命令: {' '.join(ssh_args)}")
         try:
-            subprocess.run(ssh_command, shell=True, check=True)
+            subprocess.run(ssh_args, check=True)
         except subprocess.CalledProcessError as e:
-            logger.error(f"SSH 连接失败: {e}")
-            sys.exit(1)
+            logger.error(f"SSH 连接失败: {e}，尝试自动更新配置重新连接")
+            try:
+                prepare_connection(
+                    session,
+                    cpolar_username,
+                    cpolar_password,
+                    server_user,
+                    server_password,
+                    ssh_key_path,
+                    host_alias
+                )
+                logger.info("重新尝试通过 SSH 连接到服务器...")
+                logger.info(f"执行命令: {' '.join(ssh_args)}")
+                subprocess.run(ssh_args, check=True)
+            except Exception as ex:
+                logger.error(f"重新连接过程中发生错误: {ex}")
+                raise
     else:
-        logger.info("一切就绪！请使用以下命令免密登录到服务器（-L为映射的端口号）：")
-        logger.info(f"\t{ssh_command}")
+        try:
+            prepare_connection(
+                session,
+                cpolar_username,
+                cpolar_password,
+                server_user,
+                server_password,
+                ssh_key_path,
+                host_alias
+            )
+            logger.info("一切就绪！请使用以下命令免密登录到服务器（-L为映射的端口号）：")
+            logger.info(f"\t{' '.join(ssh_args)}")
+        except Exception as ex:
+            logger.error(f"准备连接过程中发生错误: {ex}")
+            raise
 
 
 if __name__ == "__main__":
