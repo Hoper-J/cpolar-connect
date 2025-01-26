@@ -98,8 +98,8 @@ Please refer to the [official documentation](https://www.cpolar.com/docs) for co
 1. **Clone the Repository**
 
    ```bash
-   git clone https://github.com/Hoper-J/QuickTunnel
-   cd QuickTunnel
+   git clone https://github.com/Hoper-J/CpolarAutoUpdater
+   cd CpolarAutoUpdater
    ```
 
 2. **Configuration File**

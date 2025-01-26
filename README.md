@@ -95,8 +95,8 @@
 1. **克隆仓库**
 
    ```bash
-   git clone https://github.com/Hoper-J/QuickTunnel
-   cd QuickTunnel
+   git clone https://github.com/Hoper-J/CpolarAutoUpdater
+   cd CpolarAutoUpdater
    ```
 
 2. **配置文件**
@@ -104,16 +104,16 @@
    将 cpolar 的账号/密码以及服务器端的用户名（通过 `whoami` 获取）填充至配置文件 `config.txt` 中：
 
    ```txt
-   # Please fill in the details correctly
+   # 请正确填充
    cpolar_username = your_cpolar_username
    cpolar_password = your_cpolar_password
    server_user     = your_server_user
    
-   # Custom settings
+   # 自定义
    ports           = 8888, 6666
    auto_connect    = True
    
-   # The following settings can be left as is
+   # 以下配置可以不做修改，并不影响最终结果
    server_password = 
    ssh_key_path    = ~/.ssh/id_rsa_server
    ssh_host_alias  = server
