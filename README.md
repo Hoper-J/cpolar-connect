@@ -1,348 +1,265 @@
+# Cpolar Connect
+
 <div align="center">
+
+[![PyPI version](https://img.shields.io/pypi/v/cpolar-connect.svg)](https://pypi.org/project/cpolar-connect/)
+[![Python](https://img.shields.io/pypi/pyversions/cpolar-connect.svg)](https://pypi.org/project/cpolar-connect/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 中文 | [English](./README_en.md)
 
+**🚀 自动化管理 cpolar 内网穿透连接的命令行工具**
+
 </div>
 
-- **本仓库基于 cpolar 免费版，提供简单的内网穿透解决方案**。
-  - 由于 cpolar 免费版的 `host` 和 `port` 会不定期变更，手动更新信息较为繁琐。本仓库将通过自动化脚本解决这一问题。
-- **脚本将自动更新客户端的配置文件，以实现远程访问和免密码 SSH 登录**。具体步骤如下：
-  - 登录 cpolar，获取隧道信息。
-  - 检测本地 SSH 密钥，如果不存在则自动生成。
-  - 上传公钥到远程服务器，实现免密登录。
-  - 更新本地 `~/.ssh/config`，简化 SSH 连接配置。
-- **目前仅测试在 Windows/Mac/Linux 下运行。**
+## ✨ 为什么需要这个工具？
 
----
+cpolar 免费版的隧道地址会每 24 小时重置，每次都需要：
+1. 登录 cpolar 网站查看新地址
+2. 手动更新 SSH 配置
+3. 记住新的端口号
 
-## 快速开始
+**Cpolar Connect 一键解决这些问题！**
 
-> **关于服务器和客户端的定义**
->
-> 为便于理解，假设一个常见场景：「你在家使用笔记本电脑」远程连接到「实验室拥有显卡的台式机」。在本仓库中，远程台式机称为「服务器」，而你的笔记本则称为「客户端」。
+## 🎯 主要特性
 
-<details>
-    <summary> <h3> 服务器配置 </h3> </summary>
+- 🔄 **自动更新**: 自动获取最新的 cpolar 隧道地址
+- 🔐 **安全存储**: 密码加密保存，支持系统密钥环
+- 🌏 **双语支持**: 中英文界面智能切换
+- ⚡ **一键连接**: 无需记忆地址和端口
+- 🔑 **SSH 密钥**: 自动配置免密登录
+- 📦 **简单安装**: 一行命令即可使用
 
-请根据对应的系统遵循[官方文档](https://www.cpolar.com/docs)进行配置，这里给出 Linux 的配置方式：
+## 📦 安装方法
 
-1. **安装**
+### 方式一：使用 uv（推荐，最快）
 
-   - 国内：
+```bash
+# 直接运行（无需安装）
+uvx cpolar-connect
 
-     ```bash
-     curl -L https://www.cpolar.com/static/downloads/install-release-cpolar.sh | sudo bash
-     ```
+# 或安装到系统
+uv tool install cpolar-connect
+```
 
-   - 国外：
+### 方式二：使用 pipx（独立环境）
 
-     ```bash
-     curl -sL https://git.io/cpolar | sudo bash
-     ```
+```bash
+# 安装
+pipx install cpolar-connect
 
-2. **Token 认证**
+# 升级
+pipx upgrade cpolar-connect
+```
 
-   访问 cpolar：[https://dashboard.cpolar.com/signup](https://dashboard.cpolar.com/signup)，先注册好一个账号（无需验证邮箱和手机号），然后进行登录。
+### 方式三：使用 pip
 
-   ![登录](https://i-blog.csdnimg.cn/blog_migrate/5525126a4890c9305b47a25620a3569e.png)
+```bash
+pip install cpolar-connect
+```
 
-   登录 cpolar 官网[后台](https://dashboard.cpolar.com/get-started)，点击左侧的`验证`，查看你的认证 token，之后将 token 贴在命令行里：
+## 🚀 快速开始
 
-   ```bash
-   cpolar authtoken xxxxxxx
-   ```
+### 服务器端配置
 
-   ![authtoken](https://i-blog.csdnimg.cn/blog_migrate/e24196b03a5f25c8bea1b2f2bba20d39.png)
+> 服务器需要先安装并运行 cpolar，详见 [服务器配置指南](docs/SERVER_SETUP.md)
 
-3. **开机自启动**
+快速配置（Linux）：
+```bash
+# 1. 安装 cpolar
+curl -L https://www.cpolar.com/static/downloads/install-release-cpolar.sh | sudo bash
 
-   执行下列命令让其开机自动进行内网穿透，这样在远程服务器不慎重启时，本机依然可以连接：
+# 2. 配置认证（需要先注册 cpolar 账号）
+cpolar authtoken YOUR_TOKEN
 
-   ```bash
-   sudo systemctl enable cpolar	# 向系统添加服务
-   sudo systemctl start cpolar	# 启动cpolar服务
-   sudo systemctl status cpolar	# 查看服务状态
-   ```
+# 3. 设置开机自启
+sudo systemctl enable cpolar
+sudo systemctl start cpolar
 
-   显示 `active` 表示成功。
-
-4. **查看当前服务器端的用户名**
-
-   ```bash
-   whoami
-   ```
-
-   这将在之后的客户端配置文件中被用到。
-
-> **【可选】查看公网地址和端口号（服务器/客户端）**
->
-> 你可以通过以下三种方式查看内网穿透状态：
->
-> 1. 服务器用浏览器访问 [127.0.0.1:9200](http://127.0.0.1:9200/#/dashboard)，登录本地 cpolar web-ui 管理界面
-> 2. 客户端直接访问 [https://dashboard.cpolar.com/status](https://dashboard.cpolar.com/status)，查看隧道名为 `ssh` 对应的 URL。
-> 3. 直接运行 script.py（位于客户端部分）。
->
-> **示例：**
->
-> - URL：`tcp://3.tcp.vip.cpolar.cn:10387`
-> - 公网地址：`3.tcp.vip.cpolar.cn`
-> - 端口号：`10387`
-
-</details>
+# 4. 查看用户名（客户端配置需要）
+whoami
+```
 
 ### 客户端配置
 
-<details>
-    <summary> <h4> Linux / Mac </h4> </summary>
-
-1. **克隆仓库**
-
-   ```bash
-   git clone https://github.com/Hoper-J/CpolarAutoUpdater
-   cd CpolarAutoUpdater
-   ```
-
-2. **配置文件**
-
-   将 cpolar 的账号/密码以及服务器端的用户名（通过 `whoami` 获取）填充至配置文件 `config.txt` 中：
-
-   ```txt
-   # 请正确填充
-   cpolar_username = your_cpolar_username
-   cpolar_password = your_cpolar_password
-   server_user     = your_server_user
-   
-   # 自定义
-   ports           = 8888, 6666
-   auto_connect    = True
-   
-   # 以下配置可以不做修改，并不影响最终结果
-   server_password = 
-   ssh_key_path    = ~/.ssh/id_rsa_server
-   ssh_host_alias  = server
-   ```
-
-   **参数说明**
-
-   - `cpolar_username` / `cpolar_password`：cpolar 平台的登录账号和密码。
-   - `server_user` / `server_password`：远程服务器的 SSH 用户名和密码，密码可以不在配置文件中明文写出，如果不提供，脚本会提示输入。
-   - `ports`：需要映射的端口号，默认为 8888 和 6006 端口（多个端口号之间需要使用英文逗号 "," 隔开）。
-   - `auto_connect`：决定运行脚本后是否自动连接到服务器，默认为 `True`，运行脚本后自动连接到服务器。设置为 `False` 则不自动连接。
-   - `ssh_key_path`：SSH 私钥的存储路径，如果不存在该私钥则自动创建到该路径。
-   - `ssh_host_alias`：本地 SSH 配置的别名，用于简化连接命令。
-
-3. **环境配置**
-
-   在运行脚本之前，需要满足以下依赖：
-
-   - `requests`
-   - `beautifulsoup4`
-   - `paramiko`
-
-   命令行执行：
-
-   ```bash
-   pip install requests beautifulsoup4 paramiko
-   ```
-
-4. **运行脚本**
-
-   ```bash
-   python auto_tunnel.py
-   ```
-
-   将自动连接到服务器，`Ctrl+D` 退出。
-
-> **连接服务器（手动）**
->
-> 这里取决于你的 `ssh_host_alias`，默认 `ssh_host_alias = server`，此时可以使用以下命令免密登录到服务器：
->
-> ```bash
-> ssh server
-> ```
-
-#### 【可选】别名设置
-
-为方便使用脚本，可以设置别名，使其在任意目录下直接执行。
-
-**先查看 Shell 类型**
+#### 1️⃣ 初始化配置
 
 ```bash
-echo $SHELL
+cpolar-connect init
 ```
 
-- `/bin/bash` 表示你使用的是 Bash，配置文件为 `~/.bashrc`。
+根据提示输入：
+- 📧 cpolar 用户名（邮箱）
+- 👤 服务器用户名（上面 whoami 的结果）
+- 🔌 要转发的端口（默认 8888,6666）
+- 🔑 是否保存密码（推荐）
 
-- `/bin/zsh` 表示你使用的是 Zsh，配置文件为 `~/.zshrc`。
-
-**添加别名**
-
-根据你的 Shell 类型，运行以下命令：
-
-- **Bash**
-
-  ```bash
-  echo "alias tunnel='python $(pwd)/auto_tunnel.py'" >> ~/.bashrc
-  source ~/.bashrc
-  ```
-
-- **Zsh**
-
-  ```bash
-  echo "alias tunnel='python $(pwd)/auto_tunnel.py'" >> ~/.zshrc
-  source ~/.zshrc
-  ```
-
-**验证别名设置**
-
-别名设置完成后，我们可以在任意目录运行以下命令来执行脚本：
+#### 2️⃣ 连接服务器
 
 ```bash
-tunnel
+# 直接连接
+cpolar-connect
+
+# 或使用环境变量提供密码
+CPOLAR_PASSWORD=your_password cpolar-connect
 ```
 
-> [!note]
->
-> **更改别名名称**
->
-> 如果不想使用 `tunnel` 作为别名，可以在上述命令中替换为你喜欢的名称。例如，将 `tunnel` 替换为 `my_tunnel`：
->
-> ```bash
-> echo "alias my_tunnel='python $(pwd)/auto_tunnel.py'" >> ~/.bashrc
-> ```
->
-> **删除别名**
->
-> 如果需要删除别名，可以使用以下命令：
->
-> - **macOS**：
->
->   ```bash
->   sed -i '' '/alias tunnel/d' ~/.bashrc && source ~/.bashrc
->   ```
->
-> - **Linux**:
->
->   ```bash
->   sed -i '/alias tunnel/d' ~/.bashrc && source ~/.bashrc
->   ```
->
-> 如果是 Zsh，则替换 `~/.bashrc` 为 `~/.zshrc`。
->
-> **脚本路径更改**
->
-> 如果脚本被移动到其他目录，请重复上述步骤更新别名。
+**就这么简单！** 工具会自动：
+- ✅ 登录 cpolar 获取最新地址
+- ✅ 生成 SSH 密钥（首次）
+- ✅ 配置免密登录
+- ✅ 建立连接并转发端口
 
-</details>
+## ⚙️ 配置管理
 
-<details>
-    <summary> <h4> Windows </h4> </summary>
+### 查看配置
+```bash
+cpolar-connect config show
+```
 
-1. **安装 Git**
+### 修改配置
+```bash
+# 修改服务器用户
+cpolar-connect config set server.user ubuntu
 
-   a. **下载 Git**
+# 修改端口
+cpolar-connect config set server.ports 8080,3000
 
-   前往 [Git 官方下载页面](https://git-scm.com/download/win)，当前演示的下载版本如图所示：
+# 直接编辑配置文件
+cpolar-connect config edit
+```
 
-   ![image-20250126201020441](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203356.png)
+### 切换语言
+```bash
+# 中文
+cpolar-connect language zh
 
-   然后直接运行下载的安装程序，可以全部保持默认设置进行，Git 在安装完成后会自动添加到系统 `PATH`。
+# English
+cpolar-connect language en
+```
 
-   b. **验证安装**
+## 🔒 密码管理
 
-   如图所示，打开 CMD：
+### 选项 1：系统密钥环（最安全）
+初始化时选择保存密码，将安全存储在系统密钥环中。
 
-   ![image-20250126195828535](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203411.png)
+### 选项 2：环境变量
+```bash
+export CPOLAR_PASSWORD=your_password
+cpolar-connect
+```
 
-   输入以下命令验证 Git 是否安装成功：
+### 选项 3：每次输入
+不保存密码，每次连接时输入。
 
-   ```bash
-   git --version
-   ```
+## 📚 使用场景
 
-   **输出**：
+### Jupyter Notebook
+```bash
+# 配置端口 8888
+cpolar-connect config set server.ports 8888
 
-   ![image-20250126201550164](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203403.png)
+# 连接后本地访问
+# http://localhost:8888
+```
 
-   c. **克隆仓库**
+### 多端口转发
+```bash
+# 配置多个端口
+cpolar-connect config set server.ports 8888,6006,3000
 
-   ```bash
-   git clone https://github.com/Hoper-J/CpolarAutoUpdater
-   cd CpolarAutoUpdater
-   ```
+# 连接后：
+# localhost:8888 -> 服务器:8888 (Jupyter)
+# localhost:6006 -> 服务器:6006 (TensorBoard)  
+# localhost:3000 -> 服务器:3000 (Web App)
+```
 
-   ![image-20250126201831632](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203406.png)
+### SSH 别名快速连接
+```bash
+# 连接成功后，可使用别名
+ssh cpolar-server
+```
 
-2. **安装 Python**
+## 📁 文件位置
 
-   a. **下载 Python**
+- 配置文件：`~/.cpolar_connect/config.json`
+- SSH 密钥：`~/.ssh/id_rsa_cpolar`
+- 日志文件：`~/.cpolar_connect/logs/cpolar.log`
 
-   前往 [Python 官方下载页面](https://www.python.org/downloads/windows/)，选择任意版本（当前演示版本为 3.12.8）。然后直接运行下载的安装程序，注意勾选 `Add python.exe to PATH`，点击 `Install Now` 完成安装。
+## 🏥 诊断工具
 
-   ![image-20250126195543694](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203409.png)
+遇到问题时，使用内置诊断工具快速定位：
 
-   b. **验证安装**
+```bash
+cpolar-connect doctor
+```
 
-   在 CMD 中输入以下命令验证 Python 是否安装成功：
+这会检查：
+- ✅ 配置文件完整性
+- ✅ 网络连接状态
+- ✅ Cpolar 认证
+- ✅ SSH 密钥和配置
+- ✅ 活动隧道状态
 
-   ```bash
-   python --version
-   ```
+输出示例：
+```
+🏥 诊断结果
+┏━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓
+┃ 检查项         ┃ 状态   ┃ 详情             ┃
+┡━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩
+│ 配置文件       │ ✅ OK  │ 配置有效         │
+│ 网络连接       │ ✅ OK  │ 网络连接正常     │
+│ Cpolar 认证    │ ✅ OK  │ 成功认证 cpolar  │
+│ 隧道状态       │ ⚠️ WARN │ 没有活动隧道     │
+└────────────────┴────────┴──────────────────┘
+```
 
-   **输出**：
+## ❓ 常见问题
 
-   ![image-20250126200226446](https://blogby.oss-cn-guangzhou.aliyuncs.com/20250126203416.png)
+### 无法连接？
+1. 运行诊断：`cpolar-connect doctor`
+2. 确认服务器 cpolar 正在运行：`sudo systemctl status cpolar`
+3. 确认用户名密码正确
+4. 查看详细日志：`CPOLAR_LOG_LEVEL=DEBUG cpolar-connect`
 
-   c. **环境配置**
+### 如何卸载？
+```bash
+# uv
+uv tool uninstall cpolar-connect
 
-   ```bash
-   pip install paramiko requests beautifulsoup4
-   ```
+# pipx
+pipx uninstall cpolar-connect
 
-3. **配置文件**
+# pip
+pip uninstall cpolar-connect
+```
 
-   将 cpolar 的账号/密码以及服务器端的用户名（通过 `whoami` 获取）填充至配置文件 `config.txt` 中：
+### 支持哪些系统？
+- ✅ Linux (Ubuntu, CentOS, Debian...)
+- ✅ macOS
+- ✅ Windows
+- ✅ WSL
 
-   ```txt
-   # 请正确填充
-   cpolar_username = your_cpolar_username
-   cpolar_password = your_cpolar_password
-   server_user     = your_server_user
-   
-   # 自定义
-   ports           = 8888, 6666
-   auto_connect    = True
-   
-   # 以下配置可以不做修改，并不影响最终结果
-   server_password = 
-   ssh_key_path    = ~/.ssh/id_rsa_server
-   ssh_host_alias  = server
-   ```
+## 🤝 贡献
 
-   **参数说明**
+欢迎提交 Issue 和 Pull Request！
 
-   - `cpolar_username` / `cpolar_password`：cpolar 平台的登录账号和密码。
-   - `server_user` / `server_password`：远程服务器的 SSH 用户名和密码，密码可以不在配置文件中明文写出，如果不提供，脚本会提示输入。
-   - `ports`：需要映射的端口号，默认为 8888 和 6006 端口（多个端口号之间需要使用英文逗号 "," 隔开）。
-   - `auto_connect`：决定运行脚本后是否自动连接到服务器，默认为 `True`，运行脚本后自动连接到服务器。设置为 `False` 则不自动连接。
-   - `ssh_key_path`：SSH 私钥的存储路径，如果不存在该私钥则自动创建到该路径。
-   - `ssh_host_alias`：本地 SSH 配置的别名，用于简化连接命令。
+## 📄 许可证
 
-4. **运行脚本**
+MIT License - 详见 [LICENSE](LICENSE)
 
-   ```bash
-   python auto_tunnel.py
-   ```
+## 🔗 相关链接
 
-   将自动连接到服务器，`Ctrl+D` 退出。
+- [cpolar 官网](https://www.cpolar.com)
+- [服务器配置指南](docs/SERVER_SETUP.md)
+- [问题反馈](https://github.com/yourusername/cpolar-connect/issues)
 
-</details>
+---
 
-## 题外话
+<div align="center">
 
-需要特别说明的是，当前脚本并非即开即用的完整解决方案，其使用依赖以下两个前提条件：
+**如果觉得有用，请给个 ⭐ Star！**
 
-1. 服务器端已成功配置 **cpolar**。
-2. 客户端环境已安装 **Git**、**Python** 和 **SSH**。
+Made with ❤️ for developers
 
-> 目前尚未开发适配的 Shell 脚本。本脚本最初是为了应对个人需求而编写，现在整理分享出来供大家参考和使用。
+</div>
