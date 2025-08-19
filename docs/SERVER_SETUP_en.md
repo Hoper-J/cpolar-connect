@@ -155,11 +155,22 @@ No. After configuring systemctl auto-start, the cpolar service will start automa
 
 After server configuration is complete, install cpolar-connect on the client:
 
-```bash
-# Using uv (recommended)
-uvx cpolar-connect
+### Using uv (recommended)
 
-# Or using pipx
+```bash
+# Linux/macOS - Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows - Install uv (PowerShell)
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# Run cpolar-connect
+uvx cpolar-connect
+```
+
+### Or using pipx
+
+```bash
 pipx install cpolar-connect
 ```
 

@@ -21,7 +21,7 @@ from .i18n import _, get_i18n, Language
 console = Console()
 
 @click.group(invoke_without_command=True)
-@click.version_option(version="0.0.1")
+@click.version_option(version="0.1.0")
 @click.pass_context
 def cli(ctx):
     """🚀 Cpolar Connect - Easy cpolar tunnel management and SSH connections"""
@@ -48,38 +48,40 @@ def cli(ctx):
                 sys.exit(1)
             
             # Execute full connection flow
-            with console.status("[bold green]Connecting to cpolar tunnel...") as status:
-                try:
-                    # 1. Authenticate with cpolar
-                    status.update("[yellow]Authenticating with cpolar...[/yellow]")
+            try:
+                # 1. Authenticate with cpolar
+                with console.status("[yellow]Authenticating with cpolar...[/yellow]"):
                     auth = CpolarAuth(config_manager)
                     session = auth.login()
-                    
-                    # 2. Get tunnel information
-                    status.update("[yellow]Fetching tunnel information...[/yellow]")
+                
+                # 2. Get tunnel information  
+                with console.status("[yellow]Fetching tunnel information...[/yellow]"):
                     tunnel_manager = TunnelManager(session, config.base_url)
                     tunnel_info = tunnel_manager.get_tunnel_info()
-                    
-                    # 3. Setup SSH and connect
-                    status.update("[yellow]Setting up SSH connection...[/yellow]")
-                    ssh_manager = SSHManager(config)
-                    
-                    # Get server password if needed (for first-time key upload)
-                    server_password = None
-                    if not ssh_manager.test_ssh_connection(tunnel_info.hostname, tunnel_info.port):
-                        console.print(f"\n[yellow]{_('warning.first_connection')}[/yellow]")
-                        server_password = getpass(f"Enter password for {config.server_user}@{tunnel_info.hostname}: ")
-                    
-                    # Setup and connect
-                    ssh_manager.setup_and_connect(tunnel_info, server_password)
-                    
-                except (AuthenticationError, TunnelError, SSHError, NetworkError) as e:
-                    console.print(f"[red]❌ {_('error.connection_failed', error=e)}[/red]")
-                    sys.exit(1)
-                finally:
-                    # Clean logout
-                    if 'auth' in locals():
-                        auth.logout()
+                
+                # 3. Test SSH connection
+                ssh_manager = SSHManager(config)
+                
+                with console.status("[yellow]Testing SSH connection...[/yellow]"):
+                    can_connect = ssh_manager.test_ssh_connection(tunnel_info.hostname, tunnel_info.port)
+                
+                # 4. Get server password if needed (outside of status context)
+                server_password = None
+                if not can_connect:
+                    console.print(f"\n[yellow]{_('warning.first_connection')}[/yellow]")
+                    # Stop status before getting password input
+                    server_password = getpass(f"Enter password for {config.server_user}@{tunnel_info.hostname}: ")
+                
+                # 5. Setup and connect
+                ssh_manager.setup_and_connect(tunnel_info, server_password)
+                
+            except (AuthenticationError, TunnelError, SSHError, NetworkError) as e:
+                console.print(f"[red]❌ {_('error.connection_failed', error=e)}[/red]")
+                sys.exit(1)
+            finally:
+                # Clean logout
+                if 'auth' in locals():
+                    auth.logout()
             
         except ConfigError as e:
             console.print(f"[red]❌ {_('error.config', error=e)}[/red]")

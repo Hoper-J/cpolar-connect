@@ -50,6 +50,10 @@ sudo systemctl status cpolar   # 查看服务状态
 
 显示 `active` 表示成功。
 
+> [!note]
+>
+> 在 AutoDL 这样的服务器上无法启动该配置，每次启动服务器的时候需要手动执行服务启动的命令，比如 `cpolar tcp 22`。
+
 ### 4. 查看服务器用户名
 
 记录下当前用户名，客户端配置时需要使用：
@@ -155,12 +159,24 @@ nohup cpolar tcp 22 &
 
 服务器配置完成后，在客户端安装 cpolar-connect：
 
-```bash
-# 使用 uv（推荐）
-uvx cpolar-connect
+### 使用 uv（推荐）
 
-# 或使用 pipx
+```bash
+# Linux/macOS 安装 uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows 安装 uv (PowerShell)
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# 运行 cpolar-connect
+uvx cpolar-connect
+```
+
+### 或使用 pipx
+
+```bash
 pipx install cpolar-connect
 ```
 
 然后运行 `cpolar-connect init` 进行初始化配置即可！
+

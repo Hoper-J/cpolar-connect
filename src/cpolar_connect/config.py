@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import keyring
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field, field_validator
@@ -15,6 +16,7 @@ from .i18n import _
 from .exceptions import ConfigError
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 class CpolarConfig(BaseModel):
     """Cpolar configuration model with validation"""
@@ -193,17 +195,49 @@ class ConfigManager:
         elif key == "server.user":
             config_dict['server_user'] = value
         elif key == "server.ports":
-            config_dict['ports'] = value if isinstance(value, list) else [int(value)]
+            # Handle comma-separated ports
+            if isinstance(value, list):
+                config_dict['ports'] = value
+            elif isinstance(value, str):
+                # Parse comma-separated string
+                try:
+                    config_dict['ports'] = [int(p.strip()) for p in value.split(',')]
+                except ValueError:
+                    raise ConfigError(f"Invalid port value: {value}. Must be numbers separated by commas.")
+            else:
+                config_dict['ports'] = [int(value)]
         elif key == "server.auto_connect":
-            config_dict['auto_connect'] = bool(value)
+            # Handle boolean values properly
+            if isinstance(value, bool):
+                config_dict['auto_connect'] = value
+            elif isinstance(value, str):
+                value_lower = value.lower()
+                if value_lower in ['true', 'yes', '1', 'on']:
+                    config_dict['auto_connect'] = True
+                elif value_lower in ['false', 'no', '0', 'off']:
+                    config_dict['auto_connect'] = False
+                else:
+                    raise ConfigError(f"Invalid boolean value: {value}. Use 'true' or 'false'.")
+            else:
+                config_dict['auto_connect'] = bool(value)
         elif key == "ssh.key_path":
             config_dict['ssh_key_path'] = value
         elif key == "ssh.host_alias":
             config_dict['ssh_host_alias'] = value
         elif key == "ssh.key_size":
-            config_dict['ssh_key_size'] = int(value)
+            # Handle integer value with error checking
+            try:
+                config_dict['ssh_key_size'] = int(value)
+            except (ValueError, TypeError):
+                raise ConfigError(f"Invalid key size: {value}. Must be an integer.")
         elif key == "log_level":
-            config_dict['log_level'] = value
+            # Validate log level
+            valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+            value_upper = str(value).upper()
+            if value_upper in valid_levels:
+                config_dict['log_level'] = value_upper
+            else:
+                raise ConfigError(f"Invalid log level: {value}. Must be one of: {', '.join(valid_levels)}")
         else:
             # Try direct attribute
             attr_name = key.replace('.', '_')
@@ -254,22 +288,32 @@ class ConfigManager:
         console.print(table)
         
         # Show credential status
-        password_status = "🔐 Stored" if self.has_stored_password(config.username) else "❌ Not stored"
+        password_stored = self.has_stored_password(config.username)
+        if password_stored is True:
+            password_status = "🔐 Stored (env var)"
+        elif password_stored is None:
+            password_status = "🔑 May be stored in keyring"
+        else:
+            password_status = "❌ Not stored"
         console.print(f"\n🔑 Password Status: {password_status}")
         console.print(f"📁 Config Dir: {self.config_dir}")
     
     def get_password(self, username: str) -> Optional[str]:
-        """Get password from keyring or environment"""
-        # Try environment variable first
+        """Get password from environment or keyring
+        
+        Note: Environment variable is checked first to avoid keyring permission prompts.
+        """
+        # Try environment variable first (no permission needed)
         password = os.getenv('CPOLAR_PASSWORD')
         if password:
             return password
         
-        # Try keyring
+        # Try keyring (may trigger permission prompt on macOS)
         try:
             return keyring.get_password(self.keyring_service, username)
         except Exception as e:
-            console.print(f"[yellow]{_('error.keyring_access_failed', error=e)}[/yellow]")
+            # Silently fail for keyring access to avoid repeated error messages
+            logger.debug(f"Keyring access failed: {e}")
             return None
     
     def set_password(self, username: str, password: str) -> None:
@@ -281,8 +325,22 @@ class ConfigManager:
             raise ConfigError(_('error.password_store_failed', error=e))
     
     def has_stored_password(self, username: str) -> bool:
-        """Check if password is stored"""
-        return self.get_password(username) is not None
+        """Check if password is stored (without triggering keyring access)"""
+        # Check environment variable first (no permission needed)
+        if os.getenv('CPOLAR_PASSWORD'):
+            return True
+        
+        # For keyring, we can't check without accessing it
+        # So we return a generic status to avoid permission prompts
+        try:
+            # Try to check if keyring backend is available
+            backend = keyring.get_keyring()
+            # Return "maybe" status for keyring without actually accessing it
+            if backend and backend.__class__.__name__ != 'NullKeyring':
+                return None  # Unknown status - avoid accessing keyring
+            return False
+        except:
+            return False
     
     def clear_password(self, username: str) -> None:
         """Clear stored password"""

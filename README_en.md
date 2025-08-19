@@ -14,7 +14,7 @@
 
 ## ✨ Why This Tool?
 
-The free version of cpolar resets tunnel addresses every 24 hours, requiring you to:
+The free version of cpolar resets tunnel addresses periodically, requiring you to:
 1. Log in to the cpolar website to check the new address
 2. Manually update SSH configuration
 3. Remember the new port number
@@ -34,6 +34,27 @@ The free version of cpolar resets tunnel addresses every 24 hours, requiring you
 
 ### Method 1: Using uv (Recommended, Fastest)
 
+First install uv:
+
+**Linux/macOS:**
+```bash
+# Using official installer
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Or using pip
+pip install uv
+```
+
+**Windows:**
+```powershell
+# Using PowerShell
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# Or using pip
+pip install uv
+```
+
+Then run cpolar-connect:
 ```bash
 # Run directly (no installation needed)
 uvx cpolar-connect
@@ -140,14 +161,17 @@ cpolar-connect language en
 
 ## 🔒 Password Management
 
-### Option 1: System Keyring (Most Secure)
-Choose to save password during initialization for secure storage in the system keyring.
-
-### Option 2: Environment Variable
+### Option 1: Environment Variable (Recommended)
 ```bash
 export CPOLAR_PASSWORD=your_password
 cpolar-connect
 ```
+**Advantage**: No system permissions required, won't trigger macOS keychain permission prompts.
+
+### Option 2: System Keyring (Most Secure)
+Choose to save password during initialization for secure storage in the system keyring.
+
+> **macOS Users Note**: When accessing the keychain for the first time, the system will prompt for authorization. Please select "Always Allow" to avoid repeated prompts.
 
 ### Option 3: Enter Each Time
 Don't save password and enter it each time you connect.
@@ -237,8 +261,7 @@ pip uninstall cpolar-connect
 ### Which systems are supported?
 - ✅ Linux (Ubuntu, CentOS, Debian...)
 - ✅ macOS
-- ✅ Windows
-- ✅ WSL
+-  ❓ Windows
 
 ## 🤝 Contributing
 
@@ -252,14 +275,11 @@ MIT License - See [LICENSE](LICENSE)
 
 - [cpolar Official Website](https://www.cpolar.com)
 - [Server Setup Guide](docs/SERVER_SETUP_en.md)
-- [Issue Tracker](https://github.com/yourusername/cpolar-connect/issues)
+- [Issue Tracker](https://github.com/Hoper-J/cpolar-connect/issues)
 
 ---
 
 <div align="center">
-
-**If you find this useful, please give a ⭐ Star!**
-
-Made with ❤️ for developers
+<strong>Thank you for your STAR🌟, hope all of this helps you.</strong>
 
 </div>

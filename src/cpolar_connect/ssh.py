@@ -172,6 +172,7 @@ class SSHManager:
         
         # Get password if not provided
         if not password:
+            console.print(f"[yellow]🔑 {_('ssh.need_password_for_key_upload')}[/yellow]")
             password = getpass(f"Enter password for {self.server_user}@{hostname}: ")
         
         ssh = paramiko.SSHClient()
@@ -181,12 +182,15 @@ class SSHManager:
         
         try:
             # Connect with password
+            console.print(f"[dim]{_('ssh.trying_connect', username=self.server_user, hostname=hostname)}[/dim]")
             ssh.connect(
                 hostname=hostname,
                 port=port,
                 username=self.server_user,
                 password=password,
-                timeout=10
+                timeout=30,  # Increase timeout for slow connections
+                allow_agent=False,
+                look_for_keys=False
             )
             
             # Ensure .ssh directory exists
@@ -213,6 +217,13 @@ class SSHManager:
             
             ssh.close()
             
+        except paramiko.AuthenticationException as e:
+            logger.error(f"SSH authentication failed: {e}")
+            error_msg = _('error.ssh_auth_failed_detail', username=self.server_user, hostname=hostname)
+            console.print(f"[red]❌ {error_msg}[/red]")
+            console.print(f"[yellow]💡 {_('hint.check_username_password')}[/yellow]")
+            console.print(f"[yellow]💡 {_('hint.run_doctor')}[/yellow]")
+            raise SSHError(error_msg)
         except Exception as e:
             logger.error(f"Failed to upload public key: {e}")
             raise SSHError(_('error.ssh_upload_failed', error=e))
