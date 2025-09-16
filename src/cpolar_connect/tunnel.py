@@ -8,6 +8,8 @@ from typing import Dict, Optional, Tuple, Any
 from bs4 import BeautifulSoup
 import requests
 from rich.console import Console
+from pathlib import Path
+from datetime import datetime
 
 from .exceptions import TunnelError, NetworkError
 from .i18n import _
@@ -148,9 +150,17 @@ class TunnelManager:
                     logger.debug(f"Found tunnel URL in container: {tunnel_url}")
                     return tunnel_url
         
-        # Save page content for debugging
-        with open("tunnel_status_debug.html", "w", encoding="utf-8") as f:
-            f.write(html_content)
+        # Save page content for debugging to logs directory
+        try:
+            log_dir = Path.home() / ".cpolar_connect" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            debug_path = log_dir / f"tunnel_status_debug_{ts}.html"
+            with open(debug_path, "w", encoding="utf-8") as f:
+                f.write(html_content)
+        except Exception:
+            # Best-effort; ignore file errors
+            pass
         
         logger.error("Could not find tunnel URL in status page")
         raise TunnelError(_('tunnel.not_found'))

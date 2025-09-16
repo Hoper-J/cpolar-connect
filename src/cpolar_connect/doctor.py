@@ -6,6 +6,7 @@ import os
 import socket
 import subprocess
 from pathlib import Path
+import shutil
 from typing import Dict, List, Tuple, Optional
 import requests
 from rich.console import Console
@@ -316,14 +317,9 @@ class Doctor:
             return False
     
     def check_command(self, command: str, name: str) -> bool:
-        """Check if a command exists"""
+        """Check if a command exists (cross-platform)"""
         try:
-            result = subprocess.run(
-                ['which', command],
-                capture_output=True,
-                text=True
-            )
-            if result.returncode == 0:
+            if shutil.which(command):
                 self.add_check(
                     name,
                     True,

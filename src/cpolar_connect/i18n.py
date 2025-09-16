@@ -45,6 +45,7 @@ class Messages:
         "ssh.uploading_key": "Uploading public key to server...",
         "ssh.need_password_for_key_upload": "Need password to upload SSH key to server",
         "ssh.trying_connect": "Attempting SSH connection as {username}@{hostname}...",
+        "ssh.testing_connection": "Testing SSH connection...",
         "ssh.key_uploaded": "✅ Public key uploaded successfully",
         "ssh.updating_config": "Updating SSH config...",
         "ssh.config_updated": "✅ SSH config updated",
@@ -62,10 +63,22 @@ class Messages:
         "cli.enter_ssh_alias": "Enter SSH alias",
         "cli.enter_ports": "Enter ports to forward (comma-separated)",
         "cli.store_password": "Store password securely?",
+        "cli.auto_connect": "Auto-connect after update?",
+        "cli.basic_configuration": "Basic Configuration",
         "cli.connecting_server": "Connecting to server...",
         "cli.no_config": "No configuration found. Please run 'cpolar-connect init' first.",
         "cli.config_created": "✅ Configuration created successfully",
         "cli.config_updated": "✅ Configuration updated: {key} = {value}",
+        "cli.config_saved_path": "Configuration saved to: {path}",
+
+        # Status
+        "status.title": "Cpolar Connect Status",
+        "status.mode.remote": "Online",
+        "status.mode.local": "Offline (local-only)",
+        "status.auth_missing": "Password not available; showing local configuration only",
+        "status.auth_failed": "Authentication failed; showing local configuration only: {error}",
+        "status.network_failed": "Network error; showing local configuration only: {error}",
+        "status.tunnel.unknown": "Unknown (not authenticated)",
         
         # Config
         "config.loading": "Loading configuration...",
@@ -234,6 +247,7 @@ class Messages:
         "ssh.uploading_key": "正在上传公钥到服务器...",
         "ssh.need_password_for_key_upload": "需要密码来上传 SSH 密钥到服务器",
         "ssh.trying_connect": "正在尝试以 {username}@{hostname} 进行 SSH 连接...",
+        "ssh.testing_connection": "正在测试 SSH 连接...",
         "ssh.key_uploaded": "✅ 公钥上传成功",
         "ssh.updating_config": "正在更新 SSH 配置...",
         "ssh.config_updated": "✅ SSH 配置已更新",
@@ -251,10 +265,22 @@ class Messages:
         "cli.enter_ssh_alias": "请输入 SSH 别名",
         "cli.enter_ports": "请输入要转发的端口（逗号分隔）",
         "cli.store_password": "是否安全存储密码？",
+        "cli.auto_connect": "更新后自动连接？",
+        "cli.basic_configuration": "基础配置",
         "cli.connecting_server": "正在连接服务器...",
         "cli.no_config": "未找到配置。请先运行 'cpolar-connect init'。",
         "cli.config_created": "✅ 配置创建成功",
         "cli.config_updated": "✅ 配置已更新：{key} = {value}",
+        "cli.config_saved_path": "配置已保存到：{path}",
+
+        # Status
+        "status.title": "Cpolar 状态",
+        "status.mode.remote": "在线",
+        "status.mode.local": "离线（仅本地）",
+        "status.auth_missing": "缺少密码，仅展示本地配置",
+        "status.auth_failed": "认证失败，仅展示本地配置：{error}",
+        "status.network_failed": "网络异常，仅展示本地配置：{error}",
+        "status.tunnel.unknown": "未知（未认证）",
         
         # 配置
         "config.loading": "正在加载配置...",
@@ -422,16 +448,16 @@ class I18n:
         2. LANG environment variable
         3. Default to Chinese
         """
-        # Check CPOLAR_LANG first
+        # Check CPOLAR_LANG first (only zh/en)
         cpolar_lang = os.environ.get('CPOLAR_LANG', '').lower()
-        if cpolar_lang in ['en', 'english']:
+        if cpolar_lang == 'en':
             return Language.EN
-        elif cpolar_lang in ['zh', 'chinese', 'cn']:
+        elif cpolar_lang == 'zh':
             return Language.ZH
         
         # Check system LANG
         system_lang = os.environ.get('LANG', '').lower()
-        if 'zh' in system_lang or 'cn' in system_lang:
+        if 'zh' in system_lang:
             return Language.ZH
         elif 'en' in system_lang:
             return Language.EN

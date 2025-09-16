@@ -73,9 +73,9 @@ class CpolarConfig(BaseModel):
     def validate_language(cls, v: str) -> str:
         """Validate language"""
         v_lower = v.lower()
-        if v_lower in ["zh", "chinese", "cn"]:
+        if v_lower == "zh":
             return "zh"
-        elif v_lower in ["en", "english"]:
+        elif v_lower == "en":
             return "en"
         else:
             raise ValueError(f"Invalid language: {v}. Must be 'zh' or 'en'")
@@ -251,19 +251,32 @@ class ConfigManager:
         self.save_config(updated_config)
     
     def edit(self) -> None:
-        """Open configuration file in default editor"""
+        """Open configuration file in a reasonable editor per platform"""
         if not self.config_exists():
             raise ConfigError(_('cli.no_config'))
-        
-        editor = os.environ.get('EDITOR', 'nano')
+
+        editor = os.environ.get('EDITOR')
+        argv = None
+        if editor:
+            argv = [editor, str(self.config_file)]
+        else:
+            import platform
+            system = platform.system()
+            if system == 'Darwin':
+                argv = ['open', '-e', str(self.config_file)]
+            elif system == 'Windows':
+                argv = ['notepad', str(self.config_file)]
+            else:
+                argv = ['nano', str(self.config_file)]
+
         try:
-            subprocess.run([editor, str(self.config_file)], check=True)
+            subprocess.run(argv, check=True)
             # Reload config after editing
             self._config = None
         except subprocess.CalledProcessError as e:
             raise ConfigError(_('error.config_edit_failed', error=e))
         except FileNotFoundError:
-            raise ConfigError(_('error.editor_not_found', editor=editor))
+            raise ConfigError(_('error.editor_not_found', editor=argv[0]))
     
     def display(self) -> None:
         """Display current configuration"""

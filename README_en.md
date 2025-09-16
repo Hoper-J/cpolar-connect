@@ -159,6 +159,12 @@ cpolar-connect language zh
 cpolar-connect language en
 ```
 
+### View Status
+```bash
+cpolar-connect status
+```
+Shows current tunnel address, host/port, SSH alias, and local forwards without initiating a connection.
+
 ## 🔒 Password Management
 
 ### Option 1: Environment Variable (Recommended)
@@ -197,6 +203,11 @@ cpolar-connect config set server.ports 8888,6006,3000
 # localhost:6006 -> server:6006 (TensorBoard)  
 # localhost:3000 -> server:3000 (Web App)
 ```
+
+## 🔔 Scope & Limitations
+
+- Supported Plan: Currently supports and is validated on the cpolar Free plan. The tool relies on the assumption that tunnel addresses rotate periodically, then fetches the latest address and updates SSH config accordingly.
+- Subscription Plans: Subscription tiers (e.g., fixed domain, custom domain, dedicated tunnels, multi-tunnel) are not validated and are out of the intended scope. Behavior may be unexpected and is not guaranteed.
 
 ### SSH Alias Quick Connect
 ```bash

@@ -159,6 +159,12 @@ cpolar-connect language zh
 cpolar-connect language en
 ```
 
+### 查看状态
+```bash
+cpolar-connect status
+```
+显示当前隧道地址、主机/端口、SSH 别名与本地转发配置（不发起连接）。
+
 ## 🔒 密码管理
 
 ### 选项 1：环境变量（推荐）
@@ -197,6 +203,11 @@ cpolar-connect config set server.ports 8888,6006,3000
 # localhost:6006 -> 服务器:6006 (TensorBoard)  
 # localhost:3000 -> 服务器:3000 (Web App)
 ```
+
+## 🔔 适用范围与限制
+
+- 支持的套餐：当前仅支持并在 cpolar 免费套餐（Free）下验证。该工具依赖“隧道地址会周期性重置”的前提来获取最新地址并更新 SSH 配置。
+- 订阅套餐：订阅套餐（如固定域名、自定义域名、专属隧道、多隧道等）未在本工具中做兼容性验证，行为未预期
 
 ### SSH 别名快速连接
 ```bash
