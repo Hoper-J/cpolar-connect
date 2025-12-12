@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2] - 2025-12-12
+
+### 🐛 修复 / Fixes
+- 修复每次更新 SSH 配置时空行累积的问题 (#1) / Fix empty line accumulation when updating SSH config (#1)
+- 修复更新时 Match 块被误删的问题 / Fix Match blocks being incorrectly deleted during updates
+- 修复块间空行被吞掉的问题 / Fix blank lines between blocks being consumed
+
 ## [0.1.1] - 2025-09-16
 
 ### ✨ 改进 / Improvements

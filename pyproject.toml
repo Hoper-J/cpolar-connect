@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cpolar-connect"
-version = "0.1.1"
+version = "0.1.2"
 description = "Easy-to-use CLI tool for cpolar tunnel management and SSH connections"
 authors = [
     {name = "Hoper_J", email = "hoper.hw@gmail.com"},
 ]
 readme = "README.md"
 license = {file = "LICENSE"}
-requires-python = ">=3.9"
+requires-python = ">=3.8"
 keywords = ["cpolar", "tunnel", "ssh", "automation", "cli"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -19,12 +19,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Topic :: System :: Networking",
     "Topic :: Utilities",
 ]
@@ -69,14 +63,14 @@ packages = ["src/cpolar_connect"]
 
 [tool.black]
 line-length = 88
-target-version = ['py39']
+target-version = ['py38']
 
 [tool.isort]
 profile = "black"
 line_length = 88
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.8"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

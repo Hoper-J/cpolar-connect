@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CpolarAutoUpdater is a Python CLI tool (Python ≥3.9) that automates cpolar tunnel management and SSH connections. It solves the problem of dynamic host/port changes in cpolar's free version by automatically updating configurations and establishing SSH connections to remote servers through cpolar tunnels.
+CpolarAutoUpdater is a Python CLI tool (Python ≥3.8) that automates cpolar tunnel management and SSH connections. It solves the problem of dynamic host/port changes in cpolar's free version by automatically updating configurations and establishing SSH connections to remote servers through cpolar tunnels.
 
 ## Required Development Workflow
 
@@ -21,7 +21,7 @@ black src/ --line-length=88
 isort src/ --profile=black
 
 # Type checking
-mypy src/cpolar_connect --python-version=3.9
+mypy src/cpolar_connect --python-version=3.8
 
 # Run tests (when implemented)
 pytest tests/ --cov=cpolar_connect
@@ -73,7 +73,7 @@ black src/ --line-length=88
 isort src/ --profile=black
 
 # Type checking with mypy
-mypy src/cpolar_connect --python-version=3.9
+mypy src/cpolar_connect --python-version=3.8
 
 # Run tests (when available)
 pytest tests/ --cov=cpolar_connect
@@ -115,7 +115,7 @@ The project follows a modular architecture under `src/cpolar_connect/`:
 ## Development Standards
 
 ### Code Standards
-- Python ≥3.9 with type annotations where applicable
+- Python ≥3.8 with type annotations where applicable
 - Follow existing patterns and maintain consistency
 - Prioritize readable, understandable code over clever optimizations
 - Use Pydantic for configuration validation

@@ -7,6 +7,7 @@ import os
 import subprocess
 import keyring
 import logging
+import base64
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field, field_validator
@@ -313,26 +314,38 @@ class ConfigManager:
     
     def get_password(self, username: str) -> Optional[str]:
         """Get password from environment or keyring
-        
+
         Note: Environment variable is checked first to avoid keyring permission prompts.
+        Password is cached to avoid repeated keyring access within same session.
         """
         # Try environment variable first (no permission needed)
         password = os.getenv('CPOLAR_PASSWORD')
         if password:
             return password
-        
+
+        # Return cached password if available
+        cache_key = f"_password_cache_{username}"
+        if hasattr(self, cache_key):
+            return getattr(self, cache_key)
+
         # Try keyring (may trigger permission prompt on macOS)
         try:
-            return keyring.get_password(self.keyring_service, username)
+            password = keyring.get_password(self.keyring_service, username)
+            setattr(self, cache_key, password)
+            return password
         except Exception as e:
             # Silently fail for keyring access to avoid repeated error messages
             logger.debug(f"Keyring access failed: {e}")
+            setattr(self, cache_key, None)
             return None
-    
+
     def set_password(self, username: str, password: str) -> None:
         """Store password in keyring"""
         try:
             keyring.set_password(self.keyring_service, username, password)
+            # Update cache
+            cache_key = f"_password_cache_{username}"
+            setattr(self, cache_key, password)
             console.print(f"[green]✅ {_('info.password_stored')}[/green]")
         except Exception as e:
             raise ConfigError(_('error.password_store_failed', error=e))

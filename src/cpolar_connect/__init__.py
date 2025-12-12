@@ -2,7 +2,7 @@
 Cpolar Connect - Easy-to-use CLI tool for cpolar tunnel management and SSH connections
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __author__ = "Hoper_J"
 __email__ = "hoper.hw@gmail.com"
 

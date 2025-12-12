@@ -6,6 +6,7 @@ Cpolar Connect - CLI Entry Point
 import click
 import logging
 from logging.handlers import RotatingFileHandler
+from typing import Optional
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
@@ -346,7 +347,7 @@ def status_cmd(ctx):
         console.print(f"[yellow]⚠️ {_('cli.no_config')}[/yellow]")
         sys.exit(1)
 
-    def _render(config, tunnel_info=None, local_only=False, reason_msg: str | None = None):
+    def _render(config, tunnel_info=None, local_only=False, reason_msg: Optional[str] = None):
         mode = _('status.mode.remote') if not local_only else _('status.mode.local')
         title = _('status.title')
         if reason_msg and local_only:

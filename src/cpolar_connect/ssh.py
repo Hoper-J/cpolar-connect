@@ -259,7 +259,9 @@ class SSHManager:
                 host_block_start = i
                 # Find end of this host block
                 for j in range(i + 1, len(lines)):
-                    if lines[j].strip().startswith("Host "):
+                    stripped = lines[j].strip()
+                    # Stop at empty line, next Host block, or Match block
+                    if not stripped or stripped.startswith(("Host ", "Match ")):
                         host_block_end = j
                         break
                 else:
@@ -268,7 +270,7 @@ class SSHManager:
         
         # Prepare new host block
         new_block = [
-            f"\nHost {self.host_alias}\n",
+            f"Host {self.host_alias}\n",
             f"\tHostName {tunnel_info.hostname}\n",
             f"\tPort {tunnel_info.port}\n",
             f"\tUser {self.server_user}\n",
@@ -277,19 +279,21 @@ class SSHManager:
             f"\tStrictHostKeyChecking no\n",
             f"\tUserKnownHostsFile /dev/null\n"
         ]
-        
+
         # Add port forwarding if specified
         if ports:
             for port in ports:
                 new_block.append(f"\tLocalForward {port} localhost:{port}\n")
-        
+
         # Update or append host block
         if host_block_start >= 0:
             # Replace existing block
             lines[host_block_start:host_block_end] = new_block
             console.print(f"[green]{_('ssh.config_updated')}[/green]")
         else:
-            # Append new block
+            # Append new block - add leading newline for separation if file is not empty
+            if lines and lines[-1].strip():
+                lines.append("\n")
             lines.extend(new_block)
             console.print(f"[green]{_('ssh.config_updated')}[/green]")
         
