@@ -277,7 +277,9 @@ class SSHManager:
             f"\tIdentityFile {self.private_key_path}\n",
             f"\tPreferredAuthentications publickey\n",
             f"\tStrictHostKeyChecking no\n",
-            f"\tUserKnownHostsFile /dev/null\n"
+            f"\tUserKnownHostsFile /dev/null\n",
+            f"\tServerAliveInterval 30\n",
+            f"\tServerAliveCountMax 3\n"
         ]
 
         # Add port forwarding if specified
@@ -321,7 +323,9 @@ class SSHManager:
                 "-i", str(self.private_key_path),
                 "-o", "PreferredAuthentications=publickey",
                 "-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null"
+                "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "ServerAliveInterval=30",
+                "-o", "ServerAliveCountMax=3"
             ]
         else:
             # Use configured alias
