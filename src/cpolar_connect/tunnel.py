@@ -4,7 +4,7 @@ Tunnel management module for Cpolar Connect
 
 import re
 import logging
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any
 from bs4 import BeautifulSoup
 import requests
 from rich.console import Console
@@ -104,52 +104,64 @@ class TunnelManager:
             logger.error(f"Error getting tunnel info: {e}")
             raise TunnelError(_('error.tunnel', error=e))
     
-    def _parse_tunnel_url(self, html_content: str) -> str:
+    def _parse_tunnel_url(self, html_content: str, skip_tunnels: Optional[list] = None) -> str:
         """
         Parse tunnel URL from status page HTML
-        
+
         Args:
             html_content: HTML content of status page
-            
+            skip_tunnels: List of tunnel names to skip (default: ['remoteDesktop'])
+
         Returns:
             Tunnel URL (e.g., "tcp://x.tcp.vip.cpolar.cn:12345")
         """
+        if skip_tunnels is None:
+            skip_tunnels = ['remoteDesktop']
+
         soup = BeautifulSoup(html_content, 'html.parser')
-        
-        # Method 1: Look for the specific anchor tag
-        target_element = soup.find('a', href="#ZgotmplZ")
-        if target_element:
-            tunnel_url = target_element.text.strip()
-            if tunnel_url:
-                logger.debug(f"Found tunnel URL via anchor tag: {tunnel_url}")
-                return tunnel_url
-        
-        # Method 2: Look for any text matching tcp:// pattern
         tcp_pattern = re.compile(r'tcp://[a-zA-Z0-9\.\-]+:\d+')
-        matches = tcp_pattern.findall(html_content)
-        if matches:
-            tunnel_url = matches[0]  # Use first match (for free tier)
-            logger.debug(f"Found tunnel URL via regex: {tunnel_url}")
-            return tunnel_url
-        
-        # Method 3: Look in table cells
-        for td in soup.find_all('td'):
-            text = td.text.strip()
-            if text.startswith('tcp://'):
-                logger.debug(f"Found tunnel URL in table cell: {text}")
-                return text
-        
-        # Method 4: Look for specific class or id that might contain tunnel info
-        # This depends on cpolar's current HTML structure
-        tunnel_containers = soup.find_all(['div', 'span', 'p'], string=tcp_pattern)
-        if tunnel_containers:
-            for container in tunnel_containers:
-                match = tcp_pattern.search(container.text)
-                if match:
-                    tunnel_url = match.group(0)
-                    logger.debug(f"Found tunnel URL in container: {tunnel_url}")
-                    return tunnel_url
-        
+
+        # Method 1: Parse table to find SSH tunnel (local port 22)
+        # Table structure: 隧道名称(td) | URL(th) | 地区(td) | 本地地址(td) | 创建时间(td)
+        # Note: URL column uses <th scope="row"> instead of <td>
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                # Get all cells (both td and th)
+                all_cells = row.find_all(['td', 'th'])
+                # Skip header row (all th)
+                if len(all_cells) >= 5 and all_cells[0].name == 'td':
+                    tunnel_name = all_cells[0].get_text(strip=True)
+                    tunnel_url = all_cells[1].get_text(strip=True)
+                    local_addr = all_cells[3].get_text(strip=True)
+
+                    # Skip tunnels in the skip list
+                    if tunnel_name in skip_tunnels:
+                        logger.debug(f"Skipping tunnel: {tunnel_name}")
+                        continue
+
+                    # Prefer SSH tunnel (local port 22)
+                    if tunnel_url.startswith('tcp://') and ':22' in local_addr:
+                        logger.debug(f"Found SSH tunnel via table: {tunnel_url} (name={tunnel_name})")
+                        return tunnel_url
+
+        # Method 2: Fallback - find any TCP tunnel not in skip list
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                all_cells = row.find_all(['td', 'th'])
+                if len(all_cells) >= 2 and all_cells[0].name == 'td':
+                    tunnel_name = all_cells[0].get_text(strip=True)
+                    tunnel_url = all_cells[1].get_text(strip=True)
+
+                    if tunnel_name in skip_tunnels:
+                        continue
+
+                    if tunnel_url.startswith('tcp://') and tcp_pattern.match(tunnel_url):
+                        logger.debug(f"Found TCP tunnel via table fallback: {tunnel_url}")
+                        return tunnel_url
+
         # Save page content for debugging to logs directory
         try:
             log_dir = Path.home() / ".cpolar_connect" / "logs"
@@ -161,7 +173,7 @@ class TunnelManager:
         except Exception:
             # Best-effort; ignore file errors
             pass
-        
+
         logger.error("Could not find tunnel URL in status page")
         raise TunnelError(_('tunnel.not_found'))
     
