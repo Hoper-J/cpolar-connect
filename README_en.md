@@ -19,13 +19,12 @@ The free version of cpolar resets tunnel addresses periodically, requiring you t
 2. Manually update SSH configuration
 3. Remember the new port number
 
-**Cpolar Connect solves all these problems with one command!**
+**Cpolar Connect solves all these problems.**
 
 ## 🎯 Key Features
 
 - 🔄 **Auto-update**: Automatically fetch the latest cpolar tunnel address
 - 🔐 **Secure Storage**: Encrypted password storage with system keyring
-- 🌏 **Bilingual Support**: Smart switching between Chinese and English interfaces
 - ⚡ **One-click Connection**: No need to remember addresses and ports
 - 🔑 **SSH Keys**: Automatic configuration for passwordless login
 - 📦 **Simple Installation**: Ready to use with one command
@@ -109,11 +108,35 @@ whoami
 cpolar-connect init
 ```
 
-Enter when prompted:
-- 📧 Cpolar username (email)
-- 👤 Server username (from `whoami` above)
-- 🔌 Ports to forward (default 8888,6666)
-- 🔑 Store password (recommended)
+Interactive setup wizard (3 steps):
+
+```
+┌ Cpolar Connect Setup
+◆  Step 1: Cpolar Account
+│  Enter cpolar username: your@email.com
+│  ✓ Username: your@email.com
+│  Enter cpolar password: ********
+│  ✓ Password saved
+│  ◌ Verifying account...
+│  ✓ Account verified
+◆  Step 2: Server Configuration
+│  Enter server username: root
+│  ✓ Server user: root
+│  Enter ports to forward (comma-separated) (8888,6666): 8888
+│  ✓ Ports: 8888
+◆  Step 3: Connection Options
+│  Auto-connect after update? (Y/n):
+│  ✓ Auto connect: Yes
+│
+│  ─── Configuration Summary ───
+│  Username:    your@email.com
+│  Password:    Yes
+│  Server user: root
+│  Ports:       8888
+│  Auto connect: Yes
+│
+└ Setup complete! Run 'cpolar-connect' to connect.
+```
 
 #### 2️⃣ Connect to Server
 
@@ -126,10 +149,10 @@ CPOLAR_PASSWORD=your_password cpolar-connect
 ```
 
 **That's it!** The tool will automatically:
-- ✅ Log in to cpolar to get the latest address
-- ✅ Generate SSH keys (first time)
-- ✅ Configure passwordless login
-- ✅ Establish connection and forward ports
+- Log in to cpolar to get the latest address
+- Generate SSH keys (first time)
+- Configure passwordless login
+- Establish connection and forward ports
 
 ## ⚙️ Configuration Management
 
@@ -141,7 +164,7 @@ cpolar-connect config show
 ### Modify Configuration
 ```bash
 # Change server user
-cpolar-connect config set server.user ubuntu
+cpolar-connect config set server.user root
 
 # Change ports
 cpolar-connect config set server.ports 8080,3000
@@ -163,24 +186,35 @@ cpolar-connect language en
 ```bash
 cpolar-connect status
 ```
-Shows current tunnel address, host/port, SSH alias, and local forwards without initiating a connection.
+
+Shows current tunnel address, SSH configuration, etc. (without connecting):
+
+| Field | Value |
+|-------|-------|
+| Tunnel | tcp://x.tcp.vip.cpolar.cn:xxxxx |
+| Host | x.tcp.vip.cpolar.cn |
+| Port | xxxxx |
+| SSH Alias | cpolar-server |
+| SSH Key | ~/.ssh/id_rsa_cpolar |
+| Auto Connect | Yes |
+| Forward Ports | 8888 |
 
 ## 🔒 Password Management
 
-### Option 1: Environment Variable (Recommended)
+### Option 1: Save During Init (Recommended)
+Enter password when running `cpolar-connect init`, it will be securely stored in the system keyring.
+
+> **macOS Users Note**: When accessing the keychain for the first time, the system will prompt for authorization. Please select "Always Allow" to avoid repeated prompts.
+
+### Option 2: Environment Variable
 ```bash
 export CPOLAR_PASSWORD=your_password
 cpolar-connect
 ```
-**Advantage**: No system permissions required, won't trigger macOS keychain permission prompts.
-
-### Option 2: System Keyring (Most Secure)
-Choose to save password during initialization for secure storage in the system keyring.
-
-> **macOS Users Note**: When accessing the keychain for the first time, the system will prompt for authorization. Please select "Always Allow" to avoid repeated prompts.
+Advantage: No system permissions required, won't trigger macOS keychain permission prompts.
 
 ### Option 3: Enter Each Time
-Don't save password and enter it each time you connect.
+Press Enter to skip password during init, you'll be prompted each time you connect.
 
 ## 📚 Use Cases
 
@@ -200,20 +234,20 @@ cpolar-connect config set server.ports 8888,6006,3000
 
 # After connection:
 # localhost:8888 -> server:8888 (Jupyter)
-# localhost:6006 -> server:6006 (TensorBoard)  
+# localhost:6006 -> server:6006 (TensorBoard)
 # localhost:3000 -> server:3000 (Web App)
 ```
-
-## 🔔 Scope & Limitations
-
-- Supported Plan: Currently supports and is validated on the cpolar Free plan. The tool relies on the assumption that tunnel addresses rotate periodically, then fetches the latest address and updates SSH config accordingly.
-- Subscription Plans: Subscription tiers (e.g., fixed domain, custom domain, dedicated tunnels, multi-tunnel) are not validated and are out of the intended scope. Behavior may be unexpected and is not guaranteed.
 
 ### SSH Alias Quick Connect
 ```bash
 # After successful connection, use alias
 ssh cpolar-server
 ```
+
+## 🔔 Scope & Limitations
+
+- Supported Plan: Currently supports and is validated on the cpolar Free plan. The tool relies on the assumption that tunnel addresses rotate periodically, then fetches the latest address and updates SSH config accordingly.
+- Subscription Plans: Subscription tiers (e.g., fixed domain, custom domain, dedicated tunnels, multi-tunnel) are not validated and are out of the intended scope. Behavior may be unexpected and is not guaranteed.
 
 ## 📁 File Locations
 
@@ -229,25 +263,15 @@ When encountering issues, use the built-in diagnostic tool for quick troubleshoo
 cpolar-connect doctor
 ```
 
-This checks:
-- ✅ Configuration file integrity
-- ✅ Network connection status
-- ✅ Cpolar authentication
-- ✅ SSH keys and configuration
-- ✅ Active tunnel status
-
-Example output:
-```
-🏥 Diagnosis Results
-┏━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓
-┃ Check Item     ┃ Status ┃ Details          ┃
-┡━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩
-│ Configuration  │ ✅ OK  │ Config valid     │
-│ Network        │ ✅ OK  │ Connection good  │
-│ Cpolar Auth    │ ✅ OK  │ Auth successful  │
-│ Tunnel Status  │ ⚠️ WARN │ No active tunnel │
-└────────────────┴────────┴──────────────────┘
-```
+| Check Item | Description |
+|------------|-------------|
+| Configuration | Config file integrity |
+| Password | Whether password is saved |
+| Network | Network connectivity |
+| SSH Keys | Private/public key existence |
+| SSH Config | ~/.ssh/config entry |
+| Cpolar Auth | Account verification |
+| Tunnel Status | Active tunnel detection |
 
 ## ❓ FAQ
 
@@ -272,7 +296,7 @@ pip uninstall cpolar-connect
 ### Which systems are supported?
 - ✅ Linux (Ubuntu, CentOS, Debian...)
 - ✅ macOS
--  ❓ Windows
+- ❓  Windows
 
 ## 🤝 Contributing
 

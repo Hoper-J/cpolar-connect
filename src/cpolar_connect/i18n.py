@@ -2,75 +2,71 @@
 Internationalization support for Cpolar Connect
 """
 
-import os
 import json
-from pathlib import Path
-from typing import Dict, Any, Optional
+import os
 from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 
 class Language(Enum):
     """Supported languages"""
+
     EN = "en"
     ZH = "zh"
 
 
 class Messages:
     """Message translations"""
-    
+
     # English messages
     EN = {
         # General
         "welcome": "Welcome to Cpolar Connect",
         "version": "Version",
         "help": "Help",
-        
         # Authentication
         "auth.csrf_token": "Obtaining CSRF token...",
         "auth.logging_in": "Logging in as {username}...",
-        "auth.login_success": "✅ Successfully logged in to cpolar",
+        "auth.login_success": "Successfully logged in to cpolar",
         "auth.login_failed": "Login failed. Please check your username and password.",
         "auth.password_required": "Password not found. Set CPOLAR_PASSWORD environment variable or run 'cpolar-connect init' to store password",
         "auth.logout": "Logged out from cpolar",
-        
         # Tunnel
         "tunnel.fetching": "Fetching tunnel information...",
-        "tunnel.found": "✅ Found tunnel: {url}",
+        "tunnel.found": "Found tunnel: {url}",
         "tunnel.not_found": "No active tunnel found. Please ensure cpolar is running on your server.",
         "tunnel.parsing_error": "Failed to parse tunnel information",
-        
         # SSH
         "ssh.generating_key": "Generating SSH key pair...",
+        "ssh.key_generated": "SSH key pair generated",
         "ssh.key_exists": "SSH key already exists: {path}",
         "ssh.uploading_key": "Uploading public key to server...",
         "ssh.need_password_for_key_upload": "Need password to upload SSH key to server",
         "ssh.trying_connect": "Attempting SSH connection as {username}@{hostname}...",
         "ssh.testing_connection": "Testing SSH connection...",
-        "ssh.key_uploaded": "✅ Public key uploaded successfully",
+        "ssh.key_uploaded": "Public key uploaded successfully",
         "ssh.updating_config": "Updating SSH config...",
-        "ssh.config_updated": "✅ SSH config updated",
+        "ssh.config_updated": "SSH config updated",
         "ssh.connecting": "Connecting to server via SSH...",
-        "ssh.connected": "✅ Connected to server",
+        "ssh.connected": "Connected to server",
         "ssh.connection_failed": "SSH connection failed: {error}",
-        
         # CLI
         "cli.initializing": "Initializing Cpolar Connect...",
-        "cli.init_complete": "✅ Initialization complete! You can now run 'cpolar-connect' to connect to your server.",
+        "cli.init_complete": "Initialization complete! You can now run 'cpolar-connect' to connect to your server.",
         "cli.config_exists": "Configuration already exists. Use --force to overwrite.",
         "cli.enter_username": "Enter your cpolar username",
         "cli.enter_password": "Enter your cpolar password",
         "cli.enter_server_user": "Enter server username",
         "cli.enter_ssh_alias": "Enter SSH alias",
         "cli.enter_ports": "Enter ports to forward (comma-separated)",
-        "cli.store_password": "Store password securely?",
         "cli.auto_connect": "Auto-connect after update?",
         "cli.basic_configuration": "Basic Configuration",
         "cli.connecting_server": "Connecting to server...",
         "cli.no_config": "No configuration found. Please run 'cpolar-connect init' first.",
-        "cli.config_created": "✅ Configuration created successfully",
-        "cli.config_updated": "✅ Configuration updated: {key} = {value}",
+        "cli.config_created": "Configuration created successfully",
+        "cli.config_updated": "Configuration updated: {key} = {value}",
         "cli.config_saved_path": "Configuration saved to: {path}",
-
         # Status
         "status.title": "Cpolar Connect Status",
         "status.mode.remote": "Online",
@@ -79,13 +75,42 @@ class Messages:
         "status.auth_failed": "Authentication failed; showing local configuration only: {error}",
         "status.network_failed": "Network error; showing local configuration only: {error}",
         "status.tunnel.unknown": "Unknown (not authenticated)",
-        
+        # Status table
+        "status.column.field": "Field",
+        "status.column.value": "Value",
+        "status.field.tunnel": "Tunnel",
+        "status.field.host": "Host",
+        "status.field.port": "Port",
+        "status.field.ssh_alias": "SSH Alias",
+        "status.field.ssh_key": "SSH Key",
+        "status.field.auto_connect": "Auto Connect",
+        "status.field.forward_ports": "Forward Ports",
         # Config
         "config.loading": "Loading configuration...",
         "config.saving": "Saving configuration...",
-        "config.saved": "✅ Configuration saved",
+        "config.saved": "Configuration saved",
         "config.invalid": "Invalid configuration: {error}",
-        
+        # Config display
+        "config.title": "Cpolar Connect Configuration",
+        "config.column_setting": "Setting",
+        "config.column_value": "Value",
+        "config.username": "Username",
+        "config.base_url": "Base URL",
+        "config.server_user": "Server User",
+        "config.ports": "Ports",
+        "config.auto_connect": "Auto Connect",
+        "config.ssh_key_path": "SSH Key Path",
+        "config.ssh_host_alias": "SSH Host Alias",
+        "config.ssh_key_size": "SSH Key Size",
+        "config.log_level": "Log Level",
+        "config.language": "Language",
+        "config.password_status": "Password Status",
+        "config.config_dir": "Config Dir",
+        "config.config_file": "Config File",
+        "config.logs_dir": "Logs Dir",
+        "config.password_env": "Stored (env var)",
+        "config.password_keyring": "May be stored in keyring",
+        "config.password_none": "Not stored",
         # Errors
         "error.network": "Network error: {error}",
         "error.auth": "Authentication error: {error}",
@@ -123,9 +148,8 @@ class Messages:
         "error.password_clear_failed": "Failed to clear password: {error}",
         "error.keyring_access_failed": "Failed to access keyring: {error}",
         "error.password_store_failed": "Failed to store password: {error}",
-        
         # Warnings
-        "warning.config_exists": "Configuration already exists. Use --force to overwrite.",
+        "warning.config_exists": "Configuration already exists. Overwrite?",
         "warning.no_password": "No stored password found",
         "warning.ssh_key_exists": "Public key already exists in authorized_keys",
         "warning.ssh_auth_failed": "SSH key authentication failed, uploading public key...",
@@ -133,27 +157,23 @@ class Messages:
         "warning.first_connection": "First time connection - need to upload SSH key",
         "warning.config_cancelled": "Configuration initialization cancelled",
         "warning.invalid_port_format": "Invalid port format",
-        
         # Info/Tips
-        "info.password_stored": "Password stored securely",
         "info.password_cleared": "Password cleared",
         "info.config_opened": "Configuration file opened in editor",
         "info.run_init": "Run 'cpolar-connect init' to create configuration",
         "info.env_password_tip": "You can also set CPOLAR_PASSWORD environment variable",
         "info.config_show_tip": "Run 'cpolar-connect config show' to view your configuration",
-        
         # Doctor
-        "doctor.title": "🏥 Diagnosis Results",
-        "doctor.running": "🔍 Running diagnostics...",
+        "doctor.title": "Diagnosis Results",
+        "doctor.running": "Running diagnostics...",
         "doctor.column.check": "Check Item",
         "doctor.column.status": "Status",
         "doctor.column.message": "Details",
         "doctor.summary.title": "Summary",
-        "doctor.summary.all_good": "✅ All checks passed! Ready to connect.",
-        "doctor.summary.has_warnings": "⚠️ Some warnings found, but should still work.",
-        "doctor.summary.has_errors": "❌ Critical issues found. Please fix them before connecting.",
+        "doctor.summary.all_good": "All checks passed! Ready to connect.",
+        "doctor.summary.has_warnings": "Some warnings found, but should still work.",
+        "doctor.summary.has_errors": "Critical issues found. Please fix them before connecting.",
         "doctor.recommendations": "Recommendations",
-        
         # Doctor checks
         "doctor.check.config": "Configuration file",
         "doctor.check.username": "Cpolar username",
@@ -166,7 +186,6 @@ class Messages:
         "doctor.check.ssh_pubkey": "SSH public key",
         "doctor.check.ssh_config": "SSH config",
         "doctor.check.ssh_command": "SSH command",
-        
         # Doctor messages
         "doctor.config.not_found": "Configuration not found. Run 'cpolar-connect init'",
         "doctor.config.no_username": "Cpolar username not configured",
@@ -194,14 +213,12 @@ class Messages:
         "doctor.ssh.config_will_create": "SSH config will be created on connection",
         "doctor.command.found": "Command '{command}' is available",
         "doctor.command.not_found": "Command '{command}' not found",
-        
         # Doctor recommendations
         "doctor.recommend.run_init": "Initialize configuration",
         "doctor.recommend.set_password": "Set password for cpolar authentication",
         "doctor.recommend.check_network": "Check network connectivity",
         "doctor.recommend.check_credentials": "Verify cpolar credentials",
         "doctor.recommend.check_server": "Check cpolar service on server",
-        
         # Doctor command examples
         "doctor.cmd.init": "cpolar-connect init",
         "doctor.cmd.password.win": "set CPOLAR_PASSWORD=your_password",
@@ -218,61 +235,103 @@ class Messages:
         "doctor.cmd.server.tunnel": "cpolar tcp 22                 # Start SSH tunnel",
         "doctor.cmd.option1": "Option 1:",
         "doctor.cmd.option2": "Option 2:",
+        # Prompts (step-style CLI)
+        "prompts.setup_title": "Cpolar Connect Setup",
+        "prompts.step_auth": "Authenticating",
+        "prompts.step_tunnel": "Fetching tunnel",
+        "prompts.step_ssh": "Testing SSH",
+        "prompts.step_connect": "Connecting",
+        "prompts.step_account": "Step 1: Cpolar Account",
+        "prompts.step_server": "Step 2: Server Configuration",
+        "prompts.step_options": "Step 3: Connection Options",
+        "prompts.tunnel_found": "Found: {url}",
+        "prompts.first_connection": "First connection - need server password",
+        "prompts.enter_server_password": "Enter password for {user}",
+        "prompts.summary_connection": "Connection Summary",
+        "prompts.summary_config": "Configuration Summary",
+        "prompts.summary_change": "Change Summary",
+        "prompts.confirm_connect": "Continue with connection?",
+        "prompts.confirm_save": "Save this configuration?",
+        "prompts.confirm_change": "Apply this change?",
+        "prompts.cancelled": "Operation cancelled",
+        "prompts.connected": "Connection established!",
+        "prompts.setup_complete": "Configuration complete! Run 'cpolar-connect' to connect.",
+        "prompts.username_set": "Username: {username}",
+        "prompts.server_user_set": "Server user: {user}",
+        "prompts.ports_set": "Ports: {ports}",
+        "prompts.auto_connect_set": "Auto connect: {enabled}",
+        "prompts.password_set": "Password saved",
+        "prompts.verifying_account": "Verifying account...",
+        "prompts.account_verified": "Account verified",
+        "prompts.account_invalid": "Verification failed",
+        "prompts.network_warning": "Network unavailable, skipping verification",
+        "prompts.password_skipped": "Password storage skipped",
+        "prompts.config_exists_skip": "Configuration exists, skipping",
+        "prompts.yes": "Yes",
+        "prompts.no": "No",
+        # Summary labels
+        "label.host": "Host",
+        "label.user": "User",
+        "label.alias": "Alias",
+        "label.ports": "Ports",
+        "label.username": "Username",
+        "label.password": "Password",
+        "label.server_user": "Server User",
+        "label.auto_connect": "Auto Connect",
+        "label.current": "Current",
+        "label.new": "New",
+        "label.key": "Key",
+        "ssh.connection_ok": "SSH connection OK",
     }
-    
+
     # Chinese messages
     ZH = {
         # 通用
         "welcome": "欢迎使用 Cpolar Connect",
         "version": "版本",
         "help": "帮助",
-        
         # 认证
         "auth.csrf_token": "正在获取 CSRF 令牌...",
         "auth.logging_in": "正在以 {username} 身份登录...",
-        "auth.login_success": "✅ 成功登录 cpolar",
+        "auth.login_success": "成功登录 cpolar",
         "auth.login_failed": "登录失败，请检查用户名和密码。",
         "auth.password_required": "未找到密码。请设置 CPOLAR_PASSWORD 环境变量或运行 'cpolar-connect init' 存储密码",
         "auth.logout": "已从 cpolar 登出",
-        
         # 隧道
         "tunnel.fetching": "正在获取隧道信息...",
-        "tunnel.found": "✅ 找到隧道：{url}",
+        "tunnel.found": "找到隧道：{url}",
         "tunnel.not_found": "未找到活动隧道。请确保服务器上 cpolar 正在运行。",
         "tunnel.parsing_error": "解析隧道信息失败",
-        
         # SSH
         "ssh.generating_key": "正在生成 SSH 密钥对...",
+        "ssh.key_generated": "SSH 密钥对已生成",
         "ssh.key_exists": "SSH 密钥已存在：{path}",
         "ssh.uploading_key": "正在上传公钥到服务器...",
         "ssh.need_password_for_key_upload": "需要密码来上传 SSH 密钥到服务器",
         "ssh.trying_connect": "正在尝试以 {username}@{hostname} 进行 SSH 连接...",
         "ssh.testing_connection": "正在测试 SSH 连接...",
-        "ssh.key_uploaded": "✅ 公钥上传成功",
+        "ssh.key_uploaded": "公钥上传成功",
         "ssh.updating_config": "正在更新 SSH 配置...",
-        "ssh.config_updated": "✅ SSH 配置已更新",
+        "ssh.config_updated": "SSH 配置已更新",
         "ssh.connecting": "正在通过 SSH 连接服务器...",
-        "ssh.connected": "✅ 已连接到服务器",
+        "ssh.connected": "已连接到服务器",
         "ssh.connection_failed": "SSH 连接失败：{error}",
-        
         # CLI
         "cli.initializing": "正在初始化 Cpolar Connect...",
-        "cli.init_complete": "✅ 初始化完成！现在可以运行 'cpolar-connect' 连接到服务器。",
+        "cli.init_complete": "初始化完成！现在可以运行 'cpolar-connect' 连接到服务器。",
         "cli.config_exists": "配置已存在。使用 --force 覆盖。",
         "cli.enter_username": "请输入 cpolar 用户名",
         "cli.enter_password": "请输入 cpolar 密码",
         "cli.enter_server_user": "请输入服务器用户名",
         "cli.enter_ssh_alias": "请输入 SSH 别名",
         "cli.enter_ports": "请输入要转发的端口（逗号分隔）",
-        "cli.store_password": "是否安全存储密码？",
         "cli.auto_connect": "更新后自动连接？",
         "cli.basic_configuration": "基础配置",
         "cli.connecting_server": "正在连接服务器...",
         "cli.no_config": "未找到配置。请先运行 'cpolar-connect init'。",
-        "cli.config_created": "✅ 配置创建成功",
-        "cli.config_updated": "✅ 配置已更新：{key} = {value}",
+        "cli.config_created": "配置创建成功",
+        "cli.config_updated": "配置已更新：{key} = {value}",
         "cli.config_saved_path": "配置已保存到：{path}",
-
         # Status
         "status.title": "Cpolar 状态",
         "status.mode.remote": "在线",
@@ -281,13 +340,42 @@ class Messages:
         "status.auth_failed": "认证失败，仅展示本地配置：{error}",
         "status.network_failed": "网络异常，仅展示本地配置：{error}",
         "status.tunnel.unknown": "未知（未认证）",
-        
+        # Status table
+        "status.column.field": "字段",
+        "status.column.value": "值",
+        "status.field.tunnel": "隧道",
+        "status.field.host": "主机",
+        "status.field.port": "端口",
+        "status.field.ssh_alias": "SSH 别名",
+        "status.field.ssh_key": "SSH 密钥",
+        "status.field.auto_connect": "自动连接",
+        "status.field.forward_ports": "转发端口",
         # 配置
         "config.loading": "正在加载配置...",
         "config.saving": "正在保存配置...",
-        "config.saved": "✅ 配置已保存",
+        "config.saved": "配置已保存",
         "config.invalid": "配置无效：{error}",
-        
+        # 配置显示
+        "config.title": "Cpolar Connect 配置",
+        "config.column_setting": "设置项",
+        "config.column_value": "值",
+        "config.username": "用户名",
+        "config.base_url": "基础 URL",
+        "config.server_user": "服务器用户",
+        "config.ports": "端口",
+        "config.auto_connect": "自动连接",
+        "config.ssh_key_path": "SSH 密钥路径",
+        "config.ssh_host_alias": "SSH 主机别名",
+        "config.ssh_key_size": "SSH 密钥大小",
+        "config.log_level": "日志级别",
+        "config.language": "语言",
+        "config.password_status": "密码状态",
+        "config.config_dir": "配置目录",
+        "config.config_file": "配置文件",
+        "config.logs_dir": "日志目录",
+        "config.password_env": "已存储（环境变量）",
+        "config.password_keyring": "可能存储在密钥环",
+        "config.password_none": "未存储",
         # 错误
         "error.network": "网络错误：{error}",
         "error.auth": "认证错误：{error}",
@@ -325,9 +413,8 @@ class Messages:
         "error.password_clear_failed": "清除密码失败：{error}",
         "error.keyring_access_failed": "访问密钥环失败：{error}",
         "error.password_store_failed": "存储密码失败：{error}",
-        
         # 警告
-        "warning.config_exists": "配置已存在。使用 --force 覆盖。",
+        "warning.config_exists": "配置已存在，是否覆盖？",
         "warning.no_password": "未找到存储的密码",
         "warning.ssh_key_exists": "公钥已存在于 authorized_keys 中",
         "warning.ssh_auth_failed": "SSH 密钥认证失败，正在上传公钥...",
@@ -335,27 +422,23 @@ class Messages:
         "warning.first_connection": "首次连接 - 需要上传 SSH 密钥",
         "warning.config_cancelled": "配置初始化已取消",
         "warning.invalid_port_format": "无效的端口格式",
-        
         # 信息/提示
-        "info.password_stored": "密码已安全存储",
         "info.password_cleared": "密码已清除",
         "info.config_opened": "配置文件已在编辑器中打开",
         "info.run_init": "运行 'cpolar-connect init' 创建配置",
         "info.env_password_tip": "您也可以设置 CPOLAR_PASSWORD 环境变量",
         "info.config_show_tip": "运行 'cpolar-connect config show' 查看配置",
-        
         # 诊断工具
-        "doctor.title": "🏥 诊断结果",
-        "doctor.running": "🔍 正在运行诊断...",
+        "doctor.title": "诊断结果",
+        "doctor.running": "正在运行诊断...",
         "doctor.column.check": "检查项",
         "doctor.column.status": "状态",
         "doctor.column.message": "详情",
         "doctor.summary.title": "总结",
-        "doctor.summary.all_good": "✅ 所有检查通过！可以连接。",
-        "doctor.summary.has_warnings": "⚠️ 发现一些警告，但应该仍可工作。",
-        "doctor.summary.has_errors": "❌ 发现严重问题。请先修复后再连接。",
+        "doctor.summary.all_good": "所有检查通过！可以连接。",
+        "doctor.summary.has_warnings": "发现一些警告，但应该仍可工作。",
+        "doctor.summary.has_errors": "发现严重问题。请先修复后再连接。",
         "doctor.recommendations": "建议",
-        
         # 诊断检查项
         "doctor.check.config": "配置文件",
         "doctor.check.username": "Cpolar 用户名",
@@ -368,7 +451,6 @@ class Messages:
         "doctor.check.ssh_pubkey": "SSH 公钥",
         "doctor.check.ssh_config": "SSH 配置",
         "doctor.check.ssh_command": "SSH 命令",
-        
         # 诊断消息
         "doctor.config.not_found": "未找到配置。运行 'cpolar-connect init'",
         "doctor.config.no_username": "未配置 Cpolar 用户名",
@@ -396,14 +478,12 @@ class Messages:
         "doctor.ssh.config_will_create": "连接时将创建 SSH 配置",
         "doctor.command.found": "命令 '{command}' 可用",
         "doctor.command.not_found": "命令 '{command}' 未找到",
-        
         # 诊断建议
         "doctor.recommend.run_init": "初始化配置",
         "doctor.recommend.set_password": "设置 cpolar 认证密码",
         "doctor.recommend.check_network": "检查网络连接",
         "doctor.recommend.check_credentials": "验证 cpolar 凭据",
         "doctor.recommend.check_server": "检查服务器上的 cpolar 服务",
-        
         # 诊断命令示例
         "doctor.cmd.init": "cpolar-connect init",
         "doctor.cmd.password.win": "set CPOLAR_PASSWORD=你的密码",
@@ -420,51 +500,98 @@ class Messages:
         "doctor.cmd.server.tunnel": "cpolar tcp 22                 # 启动 SSH 隧道",
         "doctor.cmd.option1": "方式1:",
         "doctor.cmd.option2": "方式2:",
+        # 步骤式 CLI 提示
+        "prompts.setup_title": "Cpolar Connect 配置向导",
+        "prompts.step_auth": "正在认证",
+        "prompts.step_tunnel": "获取隧道",
+        "prompts.step_ssh": "测试 SSH",
+        "prompts.step_connect": "正在连接",
+        "prompts.step_account": "步骤 1: Cpolar 账户",
+        "prompts.step_server": "步骤 2: 服务器配置",
+        "prompts.step_options": "步骤 3: 连接选项",
+        "prompts.tunnel_found": "找到: {url}",
+        "prompts.first_connection": "首次连接 - 需要服务器密码",
+        "prompts.enter_server_password": "请输入 {user} 的密码",
+        "prompts.summary_connection": "连接摘要",
+        "prompts.summary_config": "配置摘要",
+        "prompts.summary_change": "变更摘要",
+        "prompts.confirm_connect": "是否继续连接？",
+        "prompts.confirm_save": "是否保存此配置？",
+        "prompts.confirm_change": "是否应用此变更？",
+        "prompts.cancelled": "操作已取消",
+        "prompts.connected": "连接已建立！",
+        "prompts.setup_complete": "配置完成！运行 'cpolar-connect' 开始连接。",
+        "prompts.username_set": "用户名: {username}",
+        "prompts.server_user_set": "服务器用户: {user}",
+        "prompts.ports_set": "端口: {ports}",
+        "prompts.auto_connect_set": "自动连接: {enabled}",
+        "prompts.password_set": "密码已保存",
+        "prompts.verifying_account": "正在验证账户...",
+        "prompts.account_verified": "账户验证成功",
+        "prompts.account_invalid": "验证失败",
+        "prompts.network_warning": "网络不可用，跳过验证",
+        "prompts.password_skipped": "已跳过密码存储",
+        "prompts.config_exists_skip": "配置已存在，跳过",
+        "prompts.yes": "是",
+        "prompts.no": "否",
+        # Summary labels
+        "label.host": "主机",
+        "label.user": "用户",
+        "label.alias": "别名",
+        "label.ports": "端口",
+        "label.username": "用户名",
+        "label.password": "密码",
+        "label.server_user": "服务器用户",
+        "label.auto_connect": "自动连接",
+        "label.current": "当前值",
+        "label.new": "新值",
+        "label.key": "键",
+        "ssh.connection_ok": "SSH 连接正常",
     }
 
 
 class I18n:
     """Internationalization manager"""
-    
+
     def __init__(self, language: Optional[Language] = None):
         """
         Initialize i18n with specified language
-        
+
         Args:
             language: Language to use, auto-detect if None
         """
         if language is None:
             language = self._detect_language()
-        
+
         self.language = language
         self.messages = self._get_messages(language)
-    
+
     def _detect_language(self) -> Language:
         """
         Auto-detect language from environment
-        
+
         Priority:
         1. CPOLAR_LANG environment variable
         2. LANG environment variable
         3. Default to Chinese
         """
         # Check CPOLAR_LANG first (only zh/en)
-        cpolar_lang = os.environ.get('CPOLAR_LANG', '').lower()
-        if cpolar_lang == 'en':
+        cpolar_lang = os.environ.get("CPOLAR_LANG", "").lower()
+        if cpolar_lang == "en":
             return Language.EN
-        elif cpolar_lang == 'zh':
+        elif cpolar_lang == "zh":
             return Language.ZH
-        
+
         # Check system LANG
-        system_lang = os.environ.get('LANG', '').lower()
-        if 'zh' in system_lang:
+        system_lang = os.environ.get("LANG", "").lower()
+        if "zh" in system_lang:
             return Language.ZH
-        elif 'en' in system_lang:
+        elif "en" in system_lang:
             return Language.EN
-        
+
         # Default to Chinese for Chinese users
         return Language.ZH
-    
+
     def _get_messages(self, language: Language) -> Dict[str, str]:
         """Get messages for specified language"""
         if language == Language.EN:
@@ -473,20 +600,20 @@ class I18n:
             return Messages.ZH
         else:
             return Messages.ZH  # Default
-    
+
     def get(self, message_key: str, **kwargs) -> str:
         """
         Get translated message
-        
+
         Args:
             message_key: Message key (e.g., 'auth.login_success')
             **kwargs: Format parameters
-            
+
         Returns:
             Translated and formatted message
         """
         message = self.messages.get(message_key, message_key)
-        
+
         # Format message with parameters
         if kwargs:
             try:
@@ -494,46 +621,59 @@ class I18n:
             except KeyError as e:
                 # If formatting fails, return message with error indication
                 message = f"{message} [Format error: {e}]"
-        
+
         return message
-    
+
     def set_language(self, language: Language) -> None:
         """
         Change language at runtime
-        
+
         Args:
             language: New language to use
         """
         self.language = language
         self.messages = self._get_messages(language)
-    
+
     @classmethod
-    def load_from_config(cls, config_path: Optional[Path] = None) -> 'I18n':
+    def load_from_config(cls, config_path: Optional[Path] = None) -> "I18n":
         """
-        Load language preference from config file
-        
+        Load language preference with priority: env > config > default
+
+        Priority:
+            1. CPOLAR_LANG environment variable (highest)
+            2. Config file language setting
+            3. Default (Chinese)
+
         Args:
             config_path: Path to config file
-            
+
         Returns:
             I18n instance with configured language
         """
+        # 1. Check environment variable first (highest priority)
+        cpolar_lang = os.environ.get("CPOLAR_LANG", "").lower()
+        if cpolar_lang == "en":
+            return cls(Language.EN)
+        elif cpolar_lang == "zh":
+            return cls(Language.ZH)
+
+        # 2. Read from config file
         if config_path is None:
             config_path = Path.home() / ".cpolar_connect" / "config.json"
-        
+
         language = None
         if config_path.exists():
             try:
-                with open(config_path, 'r', encoding='utf-8') as f:
+                with open(config_path, "r", encoding="utf-8") as f:
                     config = json.load(f)
-                    lang_str = config.get('language', '').lower()
-                    if lang_str in ['en', 'english']:
+                    lang_str = config.get("language", "").lower()
+                    if lang_str in ["en", "english"]:
                         language = Language.EN
-                    elif lang_str in ['zh', 'chinese', 'cn']:
+                    elif lang_str in ["zh", "chinese", "cn"]:
                         language = Language.ZH
             except Exception:
                 pass
-        
+
         return cls(language)
 
 
@@ -558,7 +698,7 @@ def set_language(language: Language) -> None:
 def _(message_key: str, **kwargs) -> str:
     """
     Shortcut for getting translated message
-    
+
     Usage:
         from cpolar_connect.i18n import _
         print(_('auth.login_success'))

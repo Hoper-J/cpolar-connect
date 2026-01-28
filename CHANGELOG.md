@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.0] - 2026-01-28
+
+### ✨ 新特性 / New Features
+- Clack 风格 CLI：全新的步骤式输出风格，更清晰的交互体验 / Clack-style step output for clearer CLI interaction
+- init 凭据验证：配置账户时自动验证用户名密码有效性 / Credential verification during init before saving config
+- 完整 i18n 支持：`config show`、`config path`、连接摘要等全部支持中英文 / Full i18n support for all commands and outputs
+
+### 🔧 改进 / Improvements
+- init 流程优化：密码输入移至步骤1，端口输入错误可重试而非退出 / Improved init UX: password in step 1, port input retry on error
+- auto_connect 修复：设置为 true 时跳过连接确认提示 / auto_connect=true now skips confirmation prompt
+- CJK 对齐：中英文混合显示时标签自动对齐 / CJK character alignment for mixed language display
+- 统一帮助文本：所有命令的 --help 显示中英双语说明 / Bilingual help text for all commands
+- 架构优化：输出逻辑统一到 CLI 层，业务模块返回数据 / Output logic unified to CLI layer, business modules return data
+- 语言优先级：环境变量 CPOLAR_LANG 优先于配置文件 / CPOLAR_LANG env var takes priority over config file
+
+### 🐛 修复 / Fixes
+- 修复 SSH 空闲超时断开问题（添加 ServerAliveInterval） / Fix SSH idle timeout disconnection
+- 修复远程桌面隧道被误识别为 SSH 隧道的问题 / Fix remoteDesktop tunnel being detected as SSH tunnel
+
 ## [0.1.2] - 2025-12-12
 
 ### 🐛 修复 / Fixes
