@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cpolar-connect"
-version = "0.2.1"
+version = "0.2.2"
 description = "Easy-to-use CLI tool for cpolar tunnel management and SSH connections"
 authors = [
     {name = "Hoper_J", email = "hoper.hw@gmail.com"},
@@ -57,9 +57,6 @@ include = [
     "/README.md",
     "/LICENSE",
 ]
-
-[tool.hatch.build]
-sources = ["src"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cpolar_connect"]

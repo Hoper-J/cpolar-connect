@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.2] - 2026-01-29
+
+### 🐛 修复 / Fixes
+- 修复 PyPI 打包配置导致模块无法导入的问题 / Fix PyPI packaging config causing module import failure
+- 修复 README 徽章渲染问题 / Fix badge rendering in README
+
 ## [0.2.0] - 2026-01-28
 
 ### ✨ 新特性 / New Features
