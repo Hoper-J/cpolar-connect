@@ -109,7 +109,7 @@ class Messages:
         "config.config_file": "Config File",
         "config.logs_dir": "Logs Dir",
         "config.password_env": "Stored (env var)",
-        "config.password_keyring": "May be stored in keyring",
+        "config.password_file": "Stored (.password file)",
         "config.password_none": "Not stored",
         # Errors
         "error.network": "Network error: {error}",
@@ -146,7 +146,6 @@ class Messages:
         "hint.run_doctor": "Run 'cpolar-connect doctor' for diagnostics or 'cpolar-connect config set server.user USERNAME' to fix",
         "error.tunnel_url_invalid": "Invalid tunnel URL format: {url}",
         "error.password_clear_failed": "Failed to clear password: {error}",
-        "error.keyring_access_failed": "Failed to access keyring: {error}",
         "error.password_store_failed": "Failed to store password: {error}",
         # Warnings
         "warning.config_exists": "Configuration already exists. Overwrite?",
@@ -191,7 +190,7 @@ class Messages:
         "doctor.config.no_username": "Cpolar username not configured",
         "doctor.config.no_server_user": "Server username not configured",
         "doctor.config.valid": "Configuration is valid",
-        "doctor.password.found": "Password stored in keyring",
+        "doctor.password.found": "Password stored in .password file",
         "doctor.password.env": "Password found in environment variable",
         "doctor.password.not_found": "No password configured (will prompt when connecting)",
         "doctor.network.ok": "Network connection is good",
@@ -374,7 +373,7 @@ class Messages:
         "config.config_file": "配置文件",
         "config.logs_dir": "日志目录",
         "config.password_env": "已存储（环境变量）",
-        "config.password_keyring": "可能存储在密钥环",
+        "config.password_file": "已存储（.password 文件）",
         "config.password_none": "未存储",
         # 错误
         "error.network": "网络错误：{error}",
@@ -411,7 +410,6 @@ class Messages:
         "hint.run_doctor": "运行 'cpolar-connect doctor' 进行诊断，或使用 'cpolar-connect config set server.user 用户名' 修正",
         "error.tunnel_url_invalid": "无效的隧道 URL 格式：{url}",
         "error.password_clear_failed": "清除密码失败：{error}",
-        "error.keyring_access_failed": "访问密钥环失败：{error}",
         "error.password_store_failed": "存储密码失败：{error}",
         # 警告
         "warning.config_exists": "配置已存在，是否覆盖？",
@@ -456,7 +454,7 @@ class Messages:
         "doctor.config.no_username": "未配置 Cpolar 用户名",
         "doctor.config.no_server_user": "未配置服务器用户名",
         "doctor.config.valid": "配置有效",
-        "doctor.password.found": "密码已存储在密钥环中",
+        "doctor.password.found": "密码已存储在 .password 文件中",
         "doctor.password.env": "在环境变量中找到密码",
         "doctor.password.not_found": "未配置密码（连接时将提示输入）",
         "doctor.network.ok": "网络连接正常",

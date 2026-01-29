@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.3] - 2026-01-29
+
+### 🔧 改进 / Improvements
+- 移除 keyring 依赖，改用独立密码文件存储 / Remove keyring dependency, use separate password file
+- 密码存储于 `~/.cpolar_connect/.password`（权限 600）/ Password stored in `~/.cpolar_connect/.password` (mode 600)
+
 ## [0.2.2] - 2026-01-29
 
 ### 🐛 修复 / Fixes

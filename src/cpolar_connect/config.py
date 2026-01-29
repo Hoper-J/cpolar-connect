@@ -9,7 +9,6 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import keyring
 from pydantic import BaseModel, Field, field_validator
 
 from .exceptions import ConfigError
@@ -91,14 +90,12 @@ class ConfigManager:
     def __init__(self):
         self.config_dir = Path.home() / ".cpolar_connect"
         self.config_file = self.config_dir / "config.json"
+        self.password_file = self.config_dir / ".password"
         self.logs_dir = self.config_dir / "logs"
 
         self.logs_dir.mkdir(parents=True, exist_ok=True)
 
         self._config: Optional[CpolarConfig] = None
-
-        # Keyring service name for secure credential storage
-        self.keyring_service = "cpolar-connect"
 
     def config_exists(self) -> bool:
         """Check if configuration file exists"""
@@ -309,80 +306,60 @@ class ConfigManager:
 
     def _get_password_status(self, username: str) -> str:
         """Get password storage status key for i18n"""
-        stored = self.has_stored_password(username)
-        if stored is True:
+        if os.getenv("CPOLAR_PASSWORD"):
             return "env"
-        elif stored is None:
-            return "keyring"
-        else:
-            return "none"
+        if self.password_file.exists():
+            return "file"
+        return "none"
 
     def get_password(self, username: str) -> Optional[str]:
-        """Get password from environment or keyring
+        """Get password from environment variable or password file.
 
-        Note: Environment variable is checked first to avoid keyring permission prompts.
-        Password is cached to avoid repeated keyring access within same session.
+        Priority:
+        1. CPOLAR_PASSWORD environment variable
+        2. Password stored in ~/.cpolar_connect/.password
         """
-        # Try environment variable first (no permission needed)
+        # Try environment variable first
         password = os.getenv("CPOLAR_PASSWORD")
         if password:
             return password
 
-        # Return cached password if available
-        cache_key = f"_password_cache_{username}"
-        if hasattr(self, cache_key):
-            return getattr(self, cache_key)
+        # Try password file
+        if self.password_file.exists():
+            try:
+                return self.password_file.read_text(encoding="utf-8").strip()
+            except Exception as e:
+                logger.debug(f"Failed to read password file: {e}")
+                return None
 
-        # Try keyring (may trigger permission prompt on macOS)
-        try:
-            password = keyring.get_password(self.keyring_service, username)
-            setattr(self, cache_key, password)
-            return password
-        except Exception as e:
-            # Silently fail for keyring access to avoid repeated error messages
-            logger.debug(f"Keyring access failed: {e}")
-            setattr(self, cache_key, None)
-            return None
+        return None
 
     def set_password(self, username: str, password: str) -> None:
-        """Store password in keyring"""
+        """Store password in separate file with restricted permissions"""
         try:
-            keyring.set_password(self.keyring_service, username, password)
-            # Update cache
-            cache_key = f"_password_cache_{username}"
-            setattr(self, cache_key, password)
+            self.password_file.write_text(password, encoding="utf-8")
+            # Set file permissions to 600 (owner read/write only)
+            self.password_file.chmod(0o600)
         except Exception as e:
             raise ConfigError(_("error.password_store_failed", error=e))
 
     def has_stored_password(self, username: str) -> bool:
-        """Check if password is stored (without triggering keyring access)"""
-        # Check environment variable first (no permission needed)
+        """Check if password is stored"""
         if os.getenv("CPOLAR_PASSWORD"):
             return True
-
-        # For keyring, we can't check without accessing it
-        # So we return a generic status to avoid permission prompts
-        try:
-            # Try to check if keyring backend is available
-            backend = keyring.get_keyring()
-            # Return "maybe" status for keyring without actually accessing it
-            if backend and backend.__class__.__name__ != "NullKeyring":
-                return None  # Unknown status - avoid accessing keyring
-            return False
-        except:
-            return False
+        return self.password_file.exists()
 
     def clear_password(self, username: str) -> bool:
-        """Clear stored password
+        """Clear stored password file.
 
         Returns:
             True if password was cleared, False if no password was stored
         """
-        try:
-            keyring.delete_password(self.keyring_service, username)
-            return True
-        except keyring.errors.PasswordDeleteError:
+        if not self.password_file.exists():
             return False
+        try:
+            self.password_file.unlink()
+            return True
         except Exception as e:
             raise ConfigError(_("error.password_clear_failed", error=e))
 

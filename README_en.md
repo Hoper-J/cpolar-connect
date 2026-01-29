@@ -24,7 +24,6 @@ The free version of cpolar resets tunnel addresses periodically, requiring you t
 ## 🎯 Key Features
 
 - 🔄 **Auto-update**: Automatically fetch the latest cpolar tunnel address
-- 🔐 **Secure Storage**: Encrypted password storage with system keyring
 - ⚡ **One-click Connection**: No need to remember addresses and ports
 - 🔑 **SSH Keys**: Automatic configuration for passwordless login
 - 📦 **Simple Installation**: Ready to use with one command
@@ -202,16 +201,13 @@ Shows current tunnel address, SSH configuration, etc. (without connecting):
 ## 🔒 Password Management
 
 ### Option 1: Save During Init (Recommended)
-Enter password when running `cpolar-connect init`, it will be securely stored in the system keyring.
-
-> **macOS Users Note**: When accessing the keychain for the first time, the system will prompt for authorization. Please select "Always Allow" to avoid repeated prompts.
+Enter password when running `cpolar-connect init`, it will be stored in `~/.cpolar_connect/.password` file.
 
 ### Option 2: Environment Variable
 ```bash
 export CPOLAR_PASSWORD=your_password
 cpolar-connect
 ```
-Advantage: No system permissions required, won't trigger macOS keychain permission prompts.
 
 ### Option 3: Enter Each Time
 Press Enter to skip password during init, you'll be prompted each time you connect.

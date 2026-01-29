@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cpolar-connect"
-version = "0.2.2"
+version = "0.2.3"
 description = "Easy-to-use CLI tool for cpolar tunnel management and SSH connections"
 authors = [
     {name = "Hoper_J", email = "hoper.hw@gmail.com"},
@@ -27,7 +27,6 @@ dependencies = [
     "requests>=2.28.0",
     "beautifulsoup4>=4.11.0",
     "paramiko>=2.11.0",
-    "keyring>=24.0.0",
     "rich>=13.0.0",
     "pydantic>=2.0.0",
     "questionary>=2.0.0",

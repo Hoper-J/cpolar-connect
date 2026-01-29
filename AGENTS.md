@@ -82,7 +82,7 @@ uv run pytest tests/ -v
 The project follows a modular architecture under `src/cpolar_connect/`:
 
 - **cli.py**: Entry point for the CLI application. Handles command parsing, orchestrates the connection workflow, and renders all user-facing output (i18n-aware)
-- **config.py**: Configuration management using Pydantic models. Handles JSON config files and secure password storage via keyring. Returns data for CLI to render
+- **config.py**: Configuration management using Pydantic models. Handles JSON config files and password file storage. Returns data for CLI to render
 - **auth.py**: Cpolar authentication logic. Manages login sessions and credentials
 - **tunnel.py**: Tunnel information retrieval and management. Parses cpolar dashboard to get current tunnel details
 - **ssh.py**: SSH key generation, config updates, and connection management. Handles ~/.ssh/config modifications. Returns status for CLI to render
@@ -100,7 +100,7 @@ The project follows a modular architecture under `src/cpolar_connect/`:
 
 ### Configuration Storage
 - Main config: `~/.cpolar_connect/config.json`
-- Passwords: System keyring (secure) or environment variable `CPOLAR_PASSWORD`
+- Passwords: `~/.cpolar_connect/.password` file or environment variable `CPOLAR_PASSWORD`
 - SSH keys: Default `~/.ssh/id_rsa_cpolar` (configurable)
 - Logs: `~/.cpolar_connect/logs/cpolar.log`
 
@@ -108,7 +108,6 @@ The project follows a modular architecture under `src/cpolar_connect/`:
 - **paramiko**: SSH operations and key management
 - **requests/beautifulsoup4**: Web scraping cpolar dashboard
 - **click/rich**: CLI interface and terminal formatting
-- **keyring**: Secure password storage
 - **pydantic**: Configuration validation and type safety
 
 ## Development Standards
@@ -127,7 +126,7 @@ The project follows a modular architecture under `src/cpolar_connect/`:
 - Log errors appropriately using the configured logging level
 
 ### Security Considerations
-- **NEVER** store passwords in plain text - use keyring or environment variables
+- Password file (`~/.cpolar_connect/.password`) uses 600 permissions (owner read/write only)
 - SSH keys should have appropriate permissions (600)
 - Validate all user inputs, especially for SSH operations
 - Sanitize configuration values before using in shell commands
