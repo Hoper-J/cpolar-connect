@@ -1,9 +1,10 @@
-from pathlib import Path
-from click.testing import CliRunner
 import os
+from pathlib import Path
 
-from cpolar_connect.config import ConfigManager
+from click.testing import CliRunner
+
 from cpolar_connect.cli import cli
+from cpolar_connect.config import ConfigManager
 
 
 def test_status_local_only_without_password(monkeypatch, tmp_path: Path):
@@ -12,12 +13,14 @@ def test_status_local_only_without_password(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     cm = ConfigManager()
-    cm.create_config({
-        "username": "user@example.com",
-        "server_user": "ubuntu",
-        "ports": [8888],
-        "auto_connect": True,
-    })
+    cm.create_config(
+        {
+            "username": "user@example.com",
+            "server_user": "ubuntu",
+            "ports": [8888],
+            "auto_connect": True,
+        }
+    )
 
     runner = CliRunner()
     result = runner.invoke(cli, ["status"])  # should degrade to local-only, not error

@@ -209,8 +209,22 @@ export CPOLAR_PASSWORD=your_password
 cpolar-connect
 ```
 
-### Option 3: Enter Each Time
-Press Enter to skip password during init, you'll be prompted each time you connect.
+### Option 3: Provide via Environment Variable
+Press Enter to skip password during init, then provide it via the `CPOLAR_PASSWORD` environment variable before connecting.
+
+## 🛡️ Host Key Verification
+
+Since v0.2.4, the tool verifies the server's SSH host key to prevent man-in-the-middle attacks:
+
+- On first connection the server host key is recorded in `~/.cpolar_connect/known_hosts` (TOFU, keyed by the SSH alias, unaffected by tunnel address changes)
+- Every subsequent connection (including key tests and public key uploads) verifies against it; a mismatch refuses the connection
+- If the host key legitimately changed (e.g., server reinstall), reset it and reconnect:
+
+```bash
+cpolar-connect config clear-hostkey
+```
+
+Additionally, the first connection tries your existing SSH keys (ssh-agent/default keys) to install the public key automatically — if accepted, no server password is needed at all.
 
 ## 📚 Use Cases
 
@@ -248,6 +262,8 @@ ssh cpolar-server
 ## 📁 File Locations
 
 - Configuration: `~/.cpolar_connect/config.json`
+- Password File: `~/.cpolar_connect/.password` (mode 600)
+- Host Keys: `~/.cpolar_connect/known_hosts`
 - SSH Key: `~/.ssh/id_rsa_cpolar`
 - Log File: `~/.cpolar_connect/logs/cpolar.log`
 

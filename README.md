@@ -209,8 +209,22 @@ export CPOLAR_PASSWORD=your_password
 cpolar-connect
 ```
 
-### 选项 3：每次输入
-初始化时密码直接按回车跳过，每次连接时会提示输入。
+### 选项 3：临时通过环境变量提供
+初始化时密码直接按回车跳过，连接前通过 `CPOLAR_PASSWORD` 环境变量提供。
+
+## 🛡️ 主机密钥校验
+
+从 v0.2.4 起，工具会校验服务器的 SSH 主机密钥以防中间人攻击：
+
+- 首次连接自动记录服务器主机密钥到 `~/.cpolar_connect/known_hosts`（TOFU，按 SSH 别名存储，不受隧道地址变化影响）
+- 之后每次连接（包括密钥测试与公钥上传）都会校验，密钥不一致将拒绝连接
+- 服务器重装等导致主机密钥合法变更时，运行以下命令重置后重连：
+
+```bash
+cpolar-connect config clear-hostkey
+```
+
+此外，首次连接会先尝试使用已有 SSH 密钥（ssh-agent/默认密钥）自动完成公钥上传，成功则全程无需输入服务器密码。
 
 ## 📚 使用场景
 
@@ -248,6 +262,8 @@ ssh cpolar-server
 ## 📁 文件位置
 
 - 配置文件：`~/.cpolar_connect/config.json`
+- 密码文件：`~/.cpolar_connect/.password`（权限 600）
+- 主机密钥：`~/.cpolar_connect/known_hosts`
 - SSH 密钥：`~/.ssh/id_rsa_cpolar`
 - 日志文件：`~/.cpolar_connect/logs/cpolar.log`
 

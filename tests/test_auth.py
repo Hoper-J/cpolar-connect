@@ -2,10 +2,13 @@
 Tests for auth.py - CSRF extraction and login verification.
 """
 
-import pytest
 from unittest.mock import Mock
+
+import pytest
 from bs4 import BeautifulSoup
+
 from cpolar_connect.auth import CpolarAuth
+from cpolar_connect.exceptions import AuthenticationError, NetworkError
 
 
 class TestCsrfExtraction:
@@ -13,7 +16,7 @@ class TestCsrfExtraction:
 
     def test_extract_csrf_from_hidden_input(self, sample_login_form_html):
         """Should extract CSRF token from hidden input field."""
-        soup = BeautifulSoup(sample_login_form_html, 'html.parser')
+        soup = BeautifulSoup(sample_login_form_html, "html.parser")
         csrf_input = soup.find("input", {"name": "csrf_token"})
         assert csrf_input is not None
         token = csrf_input.get("value")
@@ -22,14 +25,14 @@ class TestCsrfExtraction:
     def test_extract_csrf_from_meta_tag(self):
         """Should extract CSRF token from meta tag as fallback."""
         html = '<html><head><meta name="csrf-token" content="meta_token_123"></head></html>'
-        soup = BeautifulSoup(html, 'html.parser')
+        soup = BeautifulSoup(html, "html.parser")
         meta = soup.find("meta", {"name": "csrf-token"})
         assert meta is not None
         assert meta.get("content") == "meta_token_123"
 
     def test_csrf_token_format(self, sample_login_form_html):
         """CSRF token should have expected format (timestamp##hash)."""
-        soup = BeautifulSoup(sample_login_form_html, 'html.parser')
+        soup = BeautifulSoup(sample_login_form_html, "html.parser")
         csrf_input = soup.find("input", {"name": "csrf_token"})
         token = csrf_input.get("value")
         # Token format: timestamp##hash
@@ -76,3 +79,37 @@ class TestLoginVerification:
         auth = CpolarAuth.__new__(CpolarAuth)
         result = auth._verify_authentication(mock_response)
         assert result is False
+
+
+class TestAuthConstruction:
+    """CpolarAuth must be usable without a saved config (e.g. during init)."""
+
+    def test_default_base_url_without_config_manager(self):
+        auth = CpolarAuth()
+        assert auth.base_url == "https://dashboard.cpolar.com"
+        assert auth.login_url == "https://dashboard.cpolar.com/login"
+
+    def test_custom_base_url_without_config_manager(self):
+        auth = CpolarAuth(base_url="https://example.com")
+        assert auth.login_url == "https://example.com/login"
+
+    def test_login_without_credentials_and_config_raises_auth_error(self):
+        auth = CpolarAuth()
+        with pytest.raises(AuthenticationError):
+            auth.login()
+
+
+class TestLoginErrors:
+    """Test error propagation during login."""
+
+    def test_login_propagates_network_error(self, monkeypatch):
+        """NetworkError from CSRF fetch must not be rewrapped as AuthenticationError."""
+        auth = CpolarAuth.__new__(CpolarAuth)
+
+        def raise_network_error():
+            raise NetworkError("connection refused")
+
+        monkeypatch.setattr(auth, "get_csrf_token", raise_network_error)
+
+        with pytest.raises(NetworkError):
+            auth.login(username="user@example.com", password="secret")

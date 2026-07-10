@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.2.4] - 2026-07-10
+
+### ✨ 新特性 / New Features
+- 主机密钥校验：首次连接记录服务器主机密钥（按 SSH 别名存储于 `~/.cpolar_connect/known_hosts`），之后每次连接校验，防止中间人攻击 / Host key verification: recorded on first connection (keyed by SSH alias in `~/.cpolar_connect/known_hosts`), verified on every connection to prevent MITM attacks
+- 新增 `config clear-hostkey` 命令：服务器重装后重置已存主机密钥 / New `config clear-hostkey` command to reset the stored host key after server reinstall
+- 首次连接自动尝试已有 SSH 密钥（ssh-agent/默认密钥）上传公钥，成功则无需输入服务器密码 / First connection tries existing SSH keys (agent/default) to install the public key — no server password needed if accepted
+
+### 🔒 安全 / Security
+- 生成的 SSH 配置改用 `StrictHostKeyChecking accept-new` + `HostKeyAlias`，不再使用 `StrictHostKeyChecking no` / Generated SSH config now uses `StrictHostKeyChecking accept-new` + `HostKeyAlias` instead of disabling host key checks
+- 密码文件以 600 权限原子创建，配置目录收紧为 700 / Password file created atomically with mode 600; config directory tightened to 700
+- 公钥上传检查远程命令退出码，失败立即报错并附带原因 / Public key upload now checks remote command exit status and fails fast with the actual error
+
+### 🐛 修复 / Fixes
+- 修复 `config set` 传入非法值或未知键时崩溃输出堆栈的问题 / Fix `config set` crashing with a traceback on invalid values or unknown keys
+- 修复本地端口为 22xx 的隧道被误判为 SSH 隧道的问题 / Fix tunnels with local port 22xx being misdetected as the SSH tunnel
+- 修复登录时网络错误被误报为认证错误的问题 / Fix network errors during login being misreported as authentication errors
+- 修复确认提示按 Ctrl+C 被当作接受默认值的问题，现在视为取消 / Fix Ctrl+C at confirmation prompts being treated as accepting the default; now cancels
+- 补充缺失的 i18n 文案并新增完整性测试防止再次遗漏 / Add missing i18n messages and a completeness test to prevent regressions
+
+### 🔧 改进 / Improvements
+- 移除未使用的 questionary 依赖 / Remove unused questionary dependency
+- 登录逻辑去重：init 凭据验证复用 CpolarAuth，支持自定义 base_url / Deduplicate login logic: init credential verification reuses CpolarAuth and respects custom base_url
+- doctor 在 Windows 上不再误报私钥权限警告，修正过时的密码提示文案 / doctor no longer false-warns about key permissions on Windows; stale password hint corrected
+
 ## [0.2.3] - 2026-01-29
 
 ### 🔧 改进 / Improvements

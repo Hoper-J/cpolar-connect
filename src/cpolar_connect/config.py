@@ -9,12 +9,17 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from .exceptions import ConfigError
 from .i18n import _
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_BASE_URL = "https://dashboard.cpolar.com"
+
+# Sentinel to distinguish "no default given" from an explicit default of None
+_MISSING = object()
 
 
 class CpolarConfig(BaseModel):
@@ -22,9 +27,7 @@ class CpolarConfig(BaseModel):
 
     # Cpolar settings
     username: str = Field(..., description="Cpolar username/email")
-    base_url: str = Field(
-        default="https://dashboard.cpolar.com", description="Cpolar base URL"
-    )
+    base_url: str = Field(default=DEFAULT_BASE_URL, description="Cpolar base URL")
 
     # Server settings
     server_user: str = Field(..., description="Remote server username")
@@ -91,9 +94,15 @@ class ConfigManager:
         self.config_dir = Path.home() / ".cpolar_connect"
         self.config_file = self.config_dir / "config.json"
         self.password_file = self.config_dir / ".password"
+        self.known_hosts_file = self.config_dir / "known_hosts"
         self.logs_dir = self.config_dir / "logs"
 
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            # The dir holds secrets (.password) and integrity-sensitive files
+            self.config_dir.chmod(0o700)
+        except OSError as e:
+            logger.debug(f"Could not tighten config dir permissions: {e}")
 
         self._config: Optional[CpolarConfig] = None
 
@@ -150,7 +159,7 @@ class ConfigManager:
             self._config = self.load_config()
         return self._config
 
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key: str, default: Any = _MISSING) -> Any:
         """Get configuration value using dot notation"""
         config = self.get_config()
 
@@ -178,7 +187,7 @@ class ConfigManager:
             try:
                 return getattr(config, key.replace(".", "_"))
             except AttributeError:
-                if default is not None:
+                if default is not _MISSING:
                     return default
                 raise KeyError(_("error.config_key_not_found", key=key))
 
@@ -253,7 +262,10 @@ class ConfigManager:
                 raise KeyError(_("error.config_key_not_found", key=key))
 
         # Create new config and save
-        updated_config = CpolarConfig(**config_dict)
+        try:
+            updated_config = CpolarConfig(**config_dict)
+        except ValidationError as e:
+            raise ConfigError(_("config.invalid", error=e))
         self.save_config(updated_config)
 
     def edit(self) -> None:
@@ -335,10 +347,16 @@ class ConfigManager:
         return None
 
     def set_password(self, username: str, password: str) -> None:
-        """Store password in separate file with restricted permissions"""
+        """Store password in a file created with owner-only permissions"""
         try:
-            self.password_file.write_text(password, encoding="utf-8")
-            # Set file permissions to 600 (owner read/write only)
+            # O_CREAT with mode 0o600 avoids a transient window where the
+            # file exists with umask-default (possibly world-readable) bits
+            fd = os.open(
+                self.password_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(password)
+            # Normalize permissions for files created by older versions
             self.password_file.chmod(0o600)
         except Exception as e:
             raise ConfigError(_("error.password_store_failed", error=e))
@@ -362,6 +380,20 @@ class ConfigManager:
             return True
         except Exception as e:
             raise ConfigError(_("error.password_clear_failed", error=e))
+
+    def clear_host_keys(self) -> bool:
+        """Remove stored server host keys.
+
+        Returns:
+            True if host keys were cleared, False if none were stored
+        """
+        if not self.known_hosts_file.exists():
+            return False
+        try:
+            self.known_hosts_file.unlink()
+            return True
+        except OSError as e:
+            raise ConfigError(_("error.hostkey_clear_failed", error=e))
 
     @property
     def config_path(self) -> Path:

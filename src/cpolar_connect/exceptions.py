@@ -33,6 +33,12 @@ class SSHError(CpolarConnectError):
     pass
 
 
+class HostKeyChangedError(SSHError):
+    """Server host key differs from the recorded one (possible MITM)"""
+
+    pass
+
+
 class NetworkError(CpolarConnectError):
     """Network connectivity errors"""
 

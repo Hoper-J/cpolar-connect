@@ -4,14 +4,15 @@ Shared fixtures for cpolar-connect tests.
 HTML samples are based on actual cpolar dashboard pages.
 """
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 
 @pytest.fixture
 def sample_status_html():
     """Real cpolar status page HTML with tunnel table."""
-    return '''
+    return """
 <table class="table table-sm">
  <thead>
   <tr>
@@ -52,13 +53,13 @@ def sample_status_html():
   </tr>
  </tbody>
 </table>
-'''
+"""
 
 
 @pytest.fixture
 def sample_status_html_only_remote_desktop():
     """Status page with only remoteDesktop tunnel (no SSH)."""
-    return '''
+    return """
 <table class="table table-sm">
  <thead>
   <tr>
@@ -81,13 +82,13 @@ def sample_status_html_only_remote_desktop():
   </tr>
  </tbody>
 </table>
-'''
+"""
 
 
 @pytest.fixture
 def sample_login_form_html():
     """Real cpolar login form HTML."""
-    return '''
+    return """
 <form action="/login" id="captcha-form" method="POST">
  <fieldset>
   <div class="control-group">
@@ -114,13 +115,13 @@ def sample_login_form_html():
   <button class="btn btn-primary btn-large" id="loginBtn" type="submit">登 录</button>
  </div>
 </form>
-'''
+"""
 
 
 @pytest.fixture
 def sample_login_success_html():
     """Real cpolar page after successful login (get-started page)."""
-    return '''
+    return """
 <html>
 <head><title>cpolar - get started</title></head>
 <body>
@@ -143,13 +144,13 @@ def sample_login_success_html():
 </div>
 </body>
 </html>
-'''
+"""
 
 
 @pytest.fixture
 def sample_login_failed_html():
     """Real cpolar login page with error message."""
-    return '''
+    return """
 <html>
 <head><title>cpolar - login</title></head>
 <body>
@@ -175,13 +176,13 @@ def sample_login_failed_html():
 </div>
 </body>
 </html>
-'''
+"""
 
 
 @pytest.fixture
 def sample_status_page_full_html():
     """Full status page HTML with navigation and tunnel table."""
-    return '''
+    return """
 <html>
 <head><title>cpolar - status</title></head>
 <body>
@@ -217,4 +218,4 @@ def sample_status_page_full_html():
 </div>
 </body>
 </html>
-'''
+"""

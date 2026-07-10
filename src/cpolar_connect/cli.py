@@ -7,20 +7,17 @@ import json
 import logging
 import os
 import sys
-from getpass import getpass
 from logging.handlers import RotatingFileHandler
 from typing import Optional
 
 import click
 from rich.console import Console
-from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
 
 from . import __version__
 from .auth import CpolarAuth
 from .config import ConfigError, ConfigManager
 from .exceptions import AuthenticationError, NetworkError, SSHError, TunnelError
-from .i18n import Language, _, get_i18n
+from .i18n import _
 from .prompts import Prompts
 from .ssh import SSHManager
 from .tunnel import TunnelManager
@@ -87,13 +84,16 @@ def _setup_logging(config_manager: ConfigManager):
     root.addHandler(handler)
 
 
-def _verify_cpolar_credentials(username: str, password: str) -> bool:
+def _verify_cpolar_credentials(
+    username: str, password: str, base_url: Optional[str] = None
+) -> bool:
     """
-    Verify cpolar credentials without requiring full config.
+    Verify cpolar credentials without requiring a saved config.
 
     Args:
         username: Cpolar username/email
         password: Cpolar password
+        base_url: Dashboard base URL (defaults to the official dashboard)
 
     Returns:
         True if credentials are valid, False otherwise
@@ -101,69 +101,12 @@ def _verify_cpolar_credentials(username: str, password: str) -> bool:
     Raises:
         NetworkError: If network connection fails
     """
-    import requests
-    from bs4 import BeautifulSoup
-
-    base_url = "https://dashboard.cpolar.com"
-    login_url = f"{base_url}/login"
-
-    session = requests.Session()
-    session.headers.update(
-        {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    )
-
+    auth = CpolarAuth(base_url=base_url)
     try:
-        # Step 1: Get CSRF token
-        response = session.get(login_url, timeout=10)
-        response.raise_for_status()
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        csrf_input = soup.find("input", {"name": "csrf_token"})
-        if not csrf_input:
-            meta_csrf = soup.find("meta", {"name": "csrf-token"})
-            csrf_token = meta_csrf.get("content", "") if meta_csrf else ""
-        else:
-            csrf_token = csrf_input.get("value", "")
-
-        # Step 2: Submit login
-        login_data = {"login": username, "password": password, "csrf_token": csrf_token}
-
-        response = session.post(
-            login_url, data=login_data, timeout=10, allow_redirects=True
-        )
-
-        # Step 3: Check result
-        response_text = response.text.lower()
-
-        # Failure indicators (based on actual cpolar responses)
-        failure_indicators = [
-            "not valid",  # "The email or password you entered is not valid."
-            "login failed",
-            "invalid credentials",
-            "incorrect password",
-            "authentication failed",
-            "登录失败",
-            "密码错误",
-            "无效",
-        ]
-        for indicator in failure_indicators:
-            if indicator in response_text:
-                return False
-
-        # Success indicators
-        if "/login" in response.url:
-            return False
-
-        if any(
-            path in response.url for path in ["/status", "/dashboard", "/get-started"]
-        ):
-            return True
-
-        success_indicators = ["logout", "status", "dashboard", "tunnel", "隧道"]
-        return any(indicator in response_text for indicator in success_indicators)
-
-    except requests.RequestException as e:
-        raise NetworkError(_("error.network", error=str(e)))
+        auth.login(username=username, password=password)
+        return True
+    except AuthenticationError:
+        return False
 
 
 def _run_connect(ctx):
@@ -240,17 +183,33 @@ def _run_connect(ctx):
             tunnel_info.hostname, tunnel_info.port
         )
 
-        # Get server password if needed
+        # Bootstrap key access if needed (first connection)
         server_password = None
+        bootstrapped_via_existing = False
         if not can_connect:
             p.spinner_done(_("prompts.first_connection"), success=False)
             p.log_warn(_("warning.first_connection"))
-            server_password = p.password(
-                _("prompts.enter_server_password", user=config.server_user)
+
+            # Our key pair must exist before any upload attempt
+            if ssh_manager.generate_ssh_key():
+                p.log_success(_("ssh.key_generated"))
+
+            # Try existing keys (agent/default) before asking for a password
+            p.spinner_message(_("ssh.trying_existing_keys"))
+            existing_result = ssh_manager.upload_public_key_with_existing_keys(
+                tunnel_info.hostname, tunnel_info.port
             )
-            if server_password is None:
-                p.outro_cancel(_("prompts.cancelled"))
-                return
+            if existing_result is not None:
+                bootstrapped_via_existing = True
+                p.spinner_done(_("ssh.key_uploaded_via_existing"))
+            else:
+                p.spinner_done(_("ssh.existing_keys_failed"), success=False)
+                server_password = p.password(
+                    _("prompts.enter_server_password", user=config.server_user)
+                )
+                if server_password is None:
+                    p.outro_cancel(_("prompts.cancelled"))
+                    return
         else:
             p.spinner_done(_("ssh.connection_ok"))
 
@@ -264,7 +223,7 @@ def _run_connect(ctx):
         else:
             p.log_info(_("ssh.key_exists", path=ssh_manager.private_key_path))
 
-        # Upload public key if needed (first connection)
+        # Upload public key with password (existing keys didn't work)
         if server_password:
             p.spinner_message(_("ssh.uploading_key"))
             key_uploaded = ssh_manager.upload_public_key(
@@ -275,7 +234,8 @@ def _run_connect(ctx):
             else:
                 p.spinner_done(_("warning.ssh_key_exists"))
 
-            # Verify connection after upload
+        # Verify connection after any upload
+        if server_password or bootstrapped_via_existing:
             if not ssh_manager.test_ssh_connection(
                 tunnel_info.hostname, tunnel_info.port
             ):
@@ -371,6 +331,14 @@ def init(ctx, force, username, server_user, ports):
 
     p.intro(_("prompts.setup_title"))
 
+    # Respect a custom base_url from an existing config when re-initializing
+    base_url = None
+    if config_manager.config_exists():
+        try:
+            base_url = config_manager.get_config().base_url
+        except ConfigError:
+            base_url = None
+
     # Step 1: Cpolar Account (username + password + verification)
     p.step(_("prompts.step_account"))
 
@@ -393,7 +361,9 @@ def init(ctx, force, username, server_user, ports):
             # Verify credentials
             p.spinner_message(_("prompts.verifying_account"))
             try:
-                verified = _verify_cpolar_credentials(username, password)
+                verified = _verify_cpolar_credentials(
+                    username, password, base_url=base_url
+                )
                 if verified:
                     p.spinner_done(_("prompts.account_verified"))
                     break
@@ -567,6 +537,9 @@ def config_set(ctx, key, value):
 
         config_manager.set(key, value)
         p.log_success(_("cli.config_updated", key=key, value=value))
+    except KeyError:
+        p.log_error(_("error.config_key_not_found", key=key))
+        sys.exit(1)
     except ConfigError as e:
         p.log_error(_("error.config", error=e))
         sys.exit(1)
@@ -669,6 +642,24 @@ def config_clear_password(ctx):
             p.log_success(_("info.password_cleared"))
         else:
             p.log_warn(_("warning.no_password"))
+    except ConfigError as e:
+        p.log_error(_("error.config", error=e))
+        sys.exit(1)
+
+
+@config.command("clear-hostkey")
+@click.help_option("--help", "-h", help="Show help / 显示帮助")
+@click.pass_context
+def config_clear_hostkey(ctx):
+    """Clear stored server host key / 清除已存的服务器主机密钥"""
+    config_manager = ctx.obj["config_manager"]
+    p: Prompts = ctx.obj["prompts"]
+    try:
+        cleared = config_manager.clear_host_keys()
+        if cleared:
+            p.log_success(_("info.hostkey_cleared"))
+        else:
+            p.log_warn(_("warning.no_hostkey"))
     except ConfigError as e:
         p.log_error(_("error.config", error=e))
         sys.exit(1)

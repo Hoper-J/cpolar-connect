@@ -6,7 +6,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import requests
 from bs4 import BeautifulSoup
@@ -139,7 +139,7 @@ class TunnelManager:
                         continue
 
                     # Prefer SSH tunnel (local port 22)
-                    if tunnel_url.startswith("tcp://") and ":22" in local_addr:
+                    if tunnel_url.startswith("tcp://") and local_addr.endswith(":22"):
                         logger.debug(
                             f"Found SSH tunnel via table: {tunnel_url} (name={tunnel_name})"
                         )

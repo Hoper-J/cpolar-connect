@@ -3,12 +3,12 @@ Authentication module for Cpolar Connect
 """
 
 import logging
-from typing import Optional, Tuple
+from typing import Optional
 
 import requests
 from bs4 import BeautifulSoup
 
-from .config import ConfigManager
+from .config import DEFAULT_BASE_URL, ConfigManager
 from .exceptions import AuthenticationError, NetworkError
 from .i18n import _
 
@@ -18,17 +18,33 @@ logger = logging.getLogger(__name__)
 class CpolarAuth:
     """Handle cpolar authentication"""
 
-    def __init__(self, config_manager: ConfigManager):
-        """Initialize authentication with config manager"""
+    def __init__(
+        self,
+        config_manager: Optional[ConfigManager] = None,
+        base_url: Optional[str] = None,
+    ):
+        """
+        Initialize authentication.
+
+        Args:
+            config_manager: Source for saved credentials and base_url. May be
+                omitted (e.g. during `init`) if credentials are passed to login().
+            base_url: Override the dashboard base URL.
+        """
         self.config_manager = config_manager
-        self.config = config_manager.get_config()
+        self.config = config_manager.get_config() if config_manager else None
         self.session = requests.Session()
         self.session.headers.update(
             {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
         )
-        self.base_url = self.config.base_url
+        if base_url:
+            self.base_url = base_url
+        elif self.config:
+            self.base_url = self.config.base_url
+        else:
+            self.base_url = DEFAULT_BASE_URL
         self.login_url = f"{self.base_url}/login"
         self.status_url = f"{self.base_url}/status"
         self.authenticated = False
@@ -81,10 +97,13 @@ class CpolarAuth:
         """
         # Get credentials
         if not username:
+            if self.config is None:
+                raise AuthenticationError(_("auth.password_required"))
             username = self.config.username
 
         if not password:
-            password = self.config_manager.get_password(username)
+            if self.config_manager is not None:
+                password = self.config_manager.get_password(username)
             if not password:
                 raise AuthenticationError(_("auth.password_required"))
 
@@ -142,7 +161,7 @@ class CpolarAuth:
         except requests.RequestException as e:
             logger.error(f"Network error during login: {e}")
             raise NetworkError(_("error.network", error=e))
-        except AuthenticationError:
+        except (AuthenticationError, NetworkError):
             raise
         except Exception as e:
             logger.error(f"Unexpected error during login: {e}")

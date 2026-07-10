@@ -4,7 +4,6 @@ Step-style CLI prompts inspired by @clack/prompts
 Provides a clean, step-by-step interaction style for CLI applications.
 """
 
-import sys
 from getpass import getpass
 from typing import Any, Dict, List, Optional
 
@@ -207,8 +206,9 @@ class Prompts:
                 return default
             return result in ("y", "yes", "true", "1")
         except (KeyboardInterrupt, EOFError):
+            # Treat interrupt/closed stdin as cancellation, never as consent
             print()
-            return default
+            return False
 
     def select(
         self,

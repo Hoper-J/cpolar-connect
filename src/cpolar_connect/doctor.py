@@ -3,11 +3,10 @@ Diagnostic tool for Cpolar Connect
 """
 
 import os
+import platform
 import shutil
-import socket
-import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Tuple
 
 import requests
 from rich.console import Console
@@ -15,8 +14,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .auth import CpolarAuth
-from .config import ConfigError, ConfigManager
-from .exceptions import AuthenticationError, NetworkError, TunnelError
+from .config import ConfigManager
+from .exceptions import AuthenticationError, TunnelError
 from .i18n import _
 from .tunnel import TunnelManager
 
@@ -29,7 +28,7 @@ class Doctor:
     def __init__(self):
         """Initialize doctor"""
         self.config_manager = ConfigManager()
-        self.checks: List[Tuple[str, bool, str]] = []
+        self.checks: List[Tuple[str, bool, str, str]] = []
         self.has_error = False
         self.has_warning = False
 
@@ -84,25 +83,21 @@ class Doctor:
             password = self.config_manager.get_password(config.username)
 
             if password:
-                self.add_check(
-                    _("doctor.check.password"), True, _("doctor.password.found")
-                )
+                # get_password prefers CPOLAR_PASSWORD; report the actual source
+                if os.environ.get("CPOLAR_PASSWORD"):
+                    message = _("doctor.password.env")
+                else:
+                    message = _("doctor.password.found")
+                self.add_check(_("doctor.check.password"), True, message)
                 return True
             else:
-                # Check environment variable
-                if os.environ.get("CPOLAR_PASSWORD"):
-                    self.add_check(
-                        _("doctor.check.password"), True, _("doctor.password.env")
-                    )
-                    return True
-                else:
-                    self.add_check(
-                        _("doctor.check.password"),
-                        False,
-                        _("doctor.password.not_found"),
-                        level="warning",
-                    )
-                    return False
+                self.add_check(
+                    _("doctor.check.password"),
+                    False,
+                    _("doctor.password.not_found"),
+                    level="warning",
+                )
+                return False
         except Exception as e:
             self.add_check(_("doctor.check.password"), False, str(e))
             return False
@@ -141,9 +136,6 @@ class Doctor:
         try:
             config = self.config_manager.get_config()
             password = self.config_manager.get_password(config.username)
-
-            if not password:
-                password = os.environ.get("CPOLAR_PASSWORD")
 
             if not password:
                 self.add_check(
@@ -198,11 +190,11 @@ class Doctor:
             ssh_key_path = Path(config.ssh_key_path).expanduser()
 
             if ssh_key_path.exists():
-                # Check permissions
+                # Check permissions (POSIX only; mode bits are meaningless on Windows)
                 stat_info = ssh_key_path.stat()
                 mode = oct(stat_info.st_mode)[-3:]
 
-                if mode != "600":
+                if platform.system() != "Windows" and mode != "600":
                     self.add_check(
                         _("doctor.check.ssh_key"),
                         False,
@@ -274,6 +266,16 @@ class Doctor:
         except Exception as e:
             self.add_check(_("doctor.check.ssh_config"), False, str(e))
             return False
+
+    def check_host_key(self) -> bool:
+        """Report host key recording status (informational)"""
+        if self.config_manager.known_hosts_file.exists():
+            self.add_check(
+                _("doctor.check.hostkey"), True, _("doctor.hostkey.recorded")
+            )
+        else:
+            self.add_check(_("doctor.check.hostkey"), True, _("doctor.hostkey.none"))
+        return True
 
     def check_command(self, command: str, name: str) -> bool:
         """Check if a command exists (cross-platform)"""
@@ -368,8 +370,6 @@ class Doctor:
                             f"  [cyan]•[/cyan] {_('doctor.recommend.set_password')}"
                         )
                         # Add OS-specific instructions
-                        import platform
-
                         if platform.system() == "Windows":
                             console.print(
                                 f"    [dim]{_('doctor.cmd.option1')} {_('doctor.cmd.password.win')}[/dim]"
@@ -427,6 +427,7 @@ class Doctor:
             self.check_network()
             self.check_ssh_key()
             self.check_ssh_config()
+            self.check_host_key()
             self.check_command("ssh", _("doctor.check.ssh_command"))
 
             # Only check cpolar auth if password is available

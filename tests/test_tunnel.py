@@ -3,8 +3,9 @@ Tests for tunnel.py - Tunnel URL parsing and extraction.
 """
 
 import pytest
-from cpolar_connect.tunnel import TunnelManager, TunnelInfo
+
 from cpolar_connect.exceptions import TunnelError
+from cpolar_connect.tunnel import TunnelInfo, TunnelManager
 
 
 class TestTunnelUrlParsing:
@@ -32,12 +33,55 @@ class TestTunnelUrlParsing:
         assert url.startswith("tcp://")
         assert "4cbb1683.r35.cpolar.top" not in url
 
-    def test_fallback_to_non_ssh_tcp_tunnel(self, sample_status_html_only_remote_desktop):
+    def test_fallback_to_non_ssh_tcp_tunnel(
+        self, sample_status_html_only_remote_desktop
+    ):
         """Should fallback to any TCP tunnel if no SSH tunnel found."""
         manager = TunnelManager.__new__(TunnelManager)
         # When only remoteDesktop exists and skip_tunnels is empty
-        url = manager._parse_tunnel_url(sample_status_html_only_remote_desktop, skip_tunnels=[])
+        url = manager._parse_tunnel_url(
+            sample_status_html_only_remote_desktop, skip_tunnels=[]
+        )
         assert url == "tcp://35.tcp.cpolar.top:12211"
+
+    def test_local_port_2222_not_mistaken_for_ssh(self):
+        """Local address port 2222 must not match the SSH (port 22) check."""
+        html = """
+<table class="table table-sm">
+ <thead>
+  <tr>
+   <th scope="col">隧道名称</th>
+   <th scope="col">URL</th>
+   <th scope="col">地区</th>
+   <th scope="col">本地地址</th>
+   <th scope="col">创建时间</th>
+  </tr>
+ </thead>
+ <tbody>
+  <tr>
+   <td>web</td>
+   <th scope="row">
+    <a href="#ZgotmplZ" target="_blank">tcp://1.tcp.cpolar.top:11111</a>
+   </th>
+   <td>cn_top</td>
+   <td>tcp://127.0.0.1:2222</td>
+   <td>2026-01-28 09:51:32 +0800 CST</td>
+  </tr>
+  <tr>
+   <td>ssh</td>
+   <th scope="row">
+    <a href="#ZgotmplZ" target="_blank">tcp://2.tcp.cpolar.top:22222</a>
+   </th>
+   <td>cn_vip</td>
+   <td>tcp://127.0.0.1:22</td>
+   <td>2026-01-28 09:51:32 +0800 CST</td>
+  </tr>
+ </tbody>
+</table>
+"""
+        manager = TunnelManager.__new__(TunnelManager)
+        url = manager._parse_tunnel_url(html)
+        assert url == "tcp://2.tcp.cpolar.top:22222"
 
     def test_no_tunnel_found_raises_error(self):
         """Should raise TunnelError when no tunnel found."""
@@ -65,14 +109,18 @@ class TestHostnamePortExtraction:
     def test_extract_hostname_and_port_standard(self):
         """Should extract hostname and port from standard URL."""
         manager = TunnelManager.__new__(TunnelManager)
-        hostname, port = manager._extract_hostname_and_port("tcp://7.tcp.vip.cpolar.cn:12766")
+        hostname, port = manager._extract_hostname_and_port(
+            "tcp://7.tcp.vip.cpolar.cn:12766"
+        )
         assert hostname == "7.tcp.vip.cpolar.cn"
         assert port == 12766
 
     def test_extract_hostname_and_port_different_domain(self):
         """Should handle different domain formats."""
         manager = TunnelManager.__new__(TunnelManager)
-        hostname, port = manager._extract_hostname_and_port("tcp://35.tcp.cpolar.top:12211")
+        hostname, port = manager._extract_hostname_and_port(
+            "tcp://35.tcp.cpolar.top:12211"
+        )
         assert hostname == "35.tcp.cpolar.top"
         assert port == 12211
 
@@ -101,10 +149,7 @@ class TestTunnelInfo:
     def test_tunnel_info_creation(self):
         """Should create TunnelInfo with correct attributes."""
         info = TunnelInfo(
-            url="tcp://example.com:1234",
-            hostname="example.com",
-            port=1234,
-            name="ssh"
+            url="tcp://example.com:1234", hostname="example.com", port=1234, name="ssh"
         )
         assert info.url == "tcp://example.com:1234"
         assert info.hostname == "example.com"
@@ -115,10 +160,7 @@ class TestTunnelInfo:
     def test_tunnel_info_to_dict(self):
         """Should convert TunnelInfo to dictionary."""
         info = TunnelInfo(
-            url="tcp://example.com:1234",
-            hostname="example.com",
-            port=1234,
-            name="ssh"
+            url="tcp://example.com:1234", hostname="example.com", port=1234, name="ssh"
         )
         data = info.to_dict()
         assert data["url"] == "tcp://example.com:1234"
@@ -130,10 +172,7 @@ class TestTunnelInfo:
     def test_tunnel_info_str(self):
         """Should have readable string representation."""
         info = TunnelInfo(
-            url="tcp://example.com:1234",
-            hostname="example.com",
-            port=1234,
-            name="ssh"
+            url="tcp://example.com:1234", hostname="example.com", port=1234, name="ssh"
         )
         s = str(info)
         assert "ssh" in s
