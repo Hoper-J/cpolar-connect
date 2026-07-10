@@ -26,6 +26,8 @@ cpolar 免费版的隧道地址会时不时重置，每次都需要：
 - 🔄 **自动更新**: 自动获取最新的 cpolar 隧道地址
 - ⚡ **一键连接**: 无需记忆地址和端口
 - 🔑 **SSH 密钥**: 自动配置免密登录
+- 🛡️ **主机密钥校验**: 自动记录并校验服务器主机密钥，防中间人攻击
+- 👥 **多账户**: `cpc use` / `-a` 在多个 cpolar 账户间快捷切换
 - 📦 **简单安装**: 一行命令即可使用
 
 ## 📦 安装方法
@@ -201,7 +203,7 @@ cpolar-connect status
 ## 🔒 密码管理
 
 ### 选项 1：初始化时保存（推荐）
-运行 `cpolar-connect init` 时输入密码，会自动存储到 `~/.cpolar_connect/.password` 文件。
+运行 `cpolar-connect init` 时输入密码，会自动存储到 `~/.cpolar_connect/accounts/<账户>/.password` 文件。
 
 ### 选项 2：环境变量
 ```bash
@@ -216,7 +218,7 @@ cpolar-connect
 
 从 v0.2.4 起，工具会校验服务器的 SSH 主机密钥以防中间人攻击：
 
-- 首次连接自动记录服务器主机密钥到 `~/.cpolar_connect/known_hosts`（TOFU，按 SSH 别名存储，不受隧道地址变化影响）
+- 首次连接自动记录服务器主机密钥到 `~/.cpolar_connect/accounts/<账户>/known_hosts`（TOFU，按 SSH 别名存储，不受隧道地址变化影响）
 - 之后每次连接（包括密钥测试与公钥上传）都会校验，密钥不一致将拒绝连接
 - 服务器重装等导致主机密钥合法变更时，运行以下命令重置后重连：
 
@@ -225,6 +227,23 @@ cpolar-connect config clear-hostkey
 ```
 
 此外，首次连接会先尝试使用已有 SSH 密钥（ssh-agent/默认密钥）自动完成公钥上传，成功则全程无需输入服务器密码。
+
+## 👥 多账户
+
+从 v0.3.0 起支持多个 cpolar 账户（对应不同服务器）。所有命令均可使用短入口 `cpc`（与 `cpolar-connect` 完全等价）：
+
+```bash
+cpc init -a work          # 创建账户 work 并切换过去（SSH 别名自动为 cpolar-work）
+cpc use home              # 切换当前账户，长期生效
+cpc -a work               # 临时用 work 账户连接一次，不改当前选择
+cpc list                  # 列出所有账户（等价于 cpc account list）
+cpc account remove work   # 删除账户（连带清理对应的 SSH 配置块）
+```
+
+- 账户解析优先级：`-a` 参数 > `CPOLAR_ACCOUNT` 环境变量 > 当前账户 > `default`
+- 旧版单账户配置会在升级后首次运行时自动迁移为 `default` 账户，无需任何操作
+- 注意：`CPOLAR_PASSWORD` 环境变量对所有账户生效，各账户密码不同时请勿使用
+- 已知限制：PyPI 上存在同名的 `cpc` 包（竞赛编程工具）。若你已安装该包，用 pipx/uv tool 安装本工具时会因命令名冲突需要 `--force`；主入口 `cpolar-connect` 不受影响
 
 ## 📚 使用场景
 
@@ -261,9 +280,10 @@ ssh cpolar-server
 
 ## 📁 文件位置
 
-- 配置文件：`~/.cpolar_connect/config.json`
-- 密码文件：`~/.cpolar_connect/.password`（权限 600）
-- 主机密钥：`~/.cpolar_connect/known_hosts`
+- 配置文件：`~/.cpolar_connect/accounts/<账户>/config.json`
+- 密码文件：`~/.cpolar_connect/accounts/<账户>/.password`（权限 600）
+- 主机密钥：`~/.cpolar_connect/accounts/<账户>/known_hosts`
+- 当前账户：`~/.cpolar_connect/current`
 - SSH 密钥：`~/.ssh/id_rsa_cpolar`
 - 日志文件：`~/.cpolar_connect/logs/cpolar.log`
 

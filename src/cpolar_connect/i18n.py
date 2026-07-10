@@ -36,6 +36,7 @@ class Messages:
         "tunnel.fetching": "Fetching tunnel information...",
         "tunnel.found": "Found tunnel: {url}",
         "tunnel.not_found": "No active tunnel found. Please ensure cpolar is running on your server.",
+        "tunnel.server_hint": "Run on the server:",
         "tunnel.parsing_error": "Failed to parse tunnel information",
         # SSH
         "ssh.generating_key": "Generating SSH key pair...",
@@ -150,6 +151,8 @@ class Messages:
         "error.tunnel_url_invalid": "Invalid tunnel URL format: {url}",
         "error.password_clear_failed": "Failed to clear password: {error}",
         "error.hostkey_clear_failed": "Failed to clear host key: {error}",
+        "error.invalid_account_name": "Invalid account name: '{name}'. Use letters, digits, '.', '_' or '-' (max 64 chars)",
+        "error.account_not_found": "Account '{name}' not found",
         "error.host_key_changed": "Server host key has changed! This could indicate a man-in-the-middle attack. If you reinstalled the server, run 'cpolar-connect config clear-hostkey' and retry.",
         "error.ssh_remote_command_failed": "Remote command failed ({command}): {error}",
         "error.password_store_failed": "Failed to store password: {error}",
@@ -167,6 +170,20 @@ class Messages:
         # Info/Tips
         "info.password_cleared": "Password cleared",
         "info.hostkey_cleared": "Stored server host key cleared",
+        "info.account_switched": "Switched to account '{name}'",
+        "info.available_accounts": "Available accounts: {names}",
+        "info.no_accounts": "No accounts yet. Run 'cpolar-connect init' first",
+        "account.removed": "Account '{name}' removed",
+        "account.confirm_remove": "Remove account '{name}' and its stored password/host keys?",
+        "account.list_title": "Cpolar Connect Accounts",
+        "account.column.name": "Account",
+        "account.column.username": "Username",
+        "account.column.alias": "SSH Alias",
+        "account.column.current": "Current",
+        "error.alias_conflict": "SSH alias '{alias}' is already used by account '{other}'",
+        "warning.hostblock_cleanup_skipped": "Could not clean SSH config block: {error}",
+        "config.account": "Account",
+        "status.field.account": "Account",
         "info.config_opened": "Configuration file opened in editor",
         "info.run_init": "Run 'cpolar-connect init' to create configuration",
         "info.env_password_tip": "You can also set CPOLAR_PASSWORD environment variable",
@@ -202,6 +219,7 @@ class Messages:
         "doctor.password.found": "Password stored in .password file",
         "doctor.password.env": "Password found in environment variable",
         "doctor.password.not_found": "No password configured. Set CPOLAR_PASSWORD or run 'cpolar-connect init'",
+        "doctor.password.env_multi_account": "CPOLAR_PASSWORD applies to ALL accounts; unset it if accounts use different passwords",
         "doctor.network.ok": "Network connection is good",
         "doctor.network.timeout": "Connection timeout - check your internet",
         "doctor.network.http_error": "HTTP error {status}",
@@ -312,6 +330,7 @@ class Messages:
         "tunnel.fetching": "正在获取隧道信息...",
         "tunnel.found": "找到隧道：{url}",
         "tunnel.not_found": "未找到活动隧道。请确保服务器上 cpolar 正在运行。",
+        "tunnel.server_hint": "请在服务器上执行：",
         "tunnel.parsing_error": "解析隧道信息失败",
         # SSH
         "ssh.generating_key": "正在生成 SSH 密钥对...",
@@ -426,6 +445,8 @@ class Messages:
         "error.tunnel_url_invalid": "无效的隧道 URL 格式：{url}",
         "error.password_clear_failed": "清除密码失败：{error}",
         "error.hostkey_clear_failed": "清除主机密钥失败：{error}",
+        "error.invalid_account_name": "无效的账户名：'{name}'。仅允许字母、数字、'.'、'_'、'-'（最长 64 字符）",
+        "error.account_not_found": "账户 '{name}' 不存在",
         "error.host_key_changed": "服务器主机密钥已变更！可能存在中间人攻击。若你重装过服务器，请运行 'cpolar-connect config clear-hostkey' 后重试。",
         "error.ssh_remote_command_failed": "远程命令执行失败（{command}）：{error}",
         "error.password_store_failed": "存储密码失败：{error}",
@@ -443,6 +464,20 @@ class Messages:
         # 信息/提示
         "info.password_cleared": "密码已清除",
         "info.hostkey_cleared": "已清除存储的服务器主机密钥",
+        "info.account_switched": "已切换到账户 '{name}'",
+        "info.available_accounts": "现有账户：{names}",
+        "info.no_accounts": "尚无账户。请先运行 'cpolar-connect init'",
+        "account.removed": "账户 '{name}' 已删除",
+        "account.confirm_remove": "删除账户 '{name}' 及其密码与主机密钥记录？",
+        "account.list_title": "Cpolar Connect 账户",
+        "account.column.name": "账户",
+        "account.column.username": "用户名",
+        "account.column.alias": "SSH 别名",
+        "account.column.current": "当前",
+        "error.alias_conflict": "SSH 别名 '{alias}' 已被账户 '{other}' 占用",
+        "warning.hostblock_cleanup_skipped": "无法清理 SSH 配置块：{error}",
+        "config.account": "账户",
+        "status.field.account": "账户",
         "info.config_opened": "配置文件已在编辑器中打开",
         "info.run_init": "运行 'cpolar-connect init' 创建配置",
         "info.env_password_tip": "您也可以设置 CPOLAR_PASSWORD 环境变量",
@@ -478,6 +513,7 @@ class Messages:
         "doctor.password.found": "密码已存储在 .password 文件中",
         "doctor.password.env": "在环境变量中找到密码",
         "doctor.password.not_found": "未配置密码。请设置 CPOLAR_PASSWORD 或运行 'cpolar-connect init'",
+        "doctor.password.env_multi_account": "CPOLAR_PASSWORD 对所有账户生效；各账户密码不同时请勿使用",
         "doctor.network.ok": "网络连接正常",
         "doctor.network.timeout": "连接超时 - 检查互联网连接",
         "doctor.network.http_error": "HTTP 错误 {status}",
@@ -679,9 +715,24 @@ class I18n:
         elif cpolar_lang == "zh":
             return cls(Language.ZH)
 
-        # 2. Read from config file
+        # 2. Read from config file: current account > default account >
+        #    legacy pre-migration root path (no import of config module
+        #    to avoid a circular dependency)
         if config_path is None:
-            config_path = Path.home() / ".cpolar_connect" / "config.json"
+            root = Path.home() / ".cpolar_connect"
+            account = None
+            current_file = root / "current"
+            if current_file.exists():
+                try:
+                    account = current_file.read_text(encoding="utf-8").strip() or None
+                except OSError:
+                    account = None
+            candidates = []
+            if account:
+                candidates.append(root / "accounts" / account / "config.json")
+            candidates.append(root / "accounts" / "default" / "config.json")
+            candidates.append(root / "config.json")  # legacy layout
+            config_path = next((c for c in candidates if c.exists()), candidates[-1])
 
         language = None
         if config_path.exists():

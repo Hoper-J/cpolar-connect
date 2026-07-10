@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0] - 2026-07-10
+
+### ✨ 新特性 / New Features
+- 多账户支持：`cpc use <name>` 粘性切换、`-a` 临时指定（所有命令、前后位置均可）、`cpc list`（顶层别名）与 `cpc account list/remove` 管理 / Multi-account support: sticky `cpc use`, per-invocation `-a` on every command, top-level `cpc list` plus `account list/remove`
+- `cpc init -a <name>` 创建新账户并自动切换，SSH 别名自动派生为 `cpolar-<name>` 且全局唯一性校验 / `init -a` creates an account and switches to it; alias derived as `cpolar-<name>` with global uniqueness check
+- 新增短入口 `cpc`（与 `cpolar-connect` 等价）/ New short entry point `cpc`
+- 账户解析优先级 `-a` > `CPOLAR_ACCOUNT` > 当前账户 > `default` / Resolution: `-a` > `CPOLAR_ACCOUNT` > current > `default`
+- 未找到隧道时提示需要在服务器上执行的命令（连接与 status 均生效）/ When no tunnel is found, show the exact commands to run on the server (both connect and status)
+
+### 🔒 安全 / Security
+- 账户名四入口统一白名单校验（防路径穿越与 SSH 配置注入）/ Account names validated at all entry points (path traversal & ssh_config injection prevention)
+- `ssh_host_alias` 增加格式校验 / `ssh_host_alias` now validated
+
+### 🔧 改进 / Improvements
+- 旧版单账户布局自动迁移为 `default` 账户（幂等、可中断续迁、同步改写 ~/.ssh/config 中的 known_hosts 路径）/ Legacy layout migrates automatically into the `default` account (idempotent, interruption-safe, rewrites known_hosts path in ~/.ssh/config)
+- ⚠️ 输出契约变化：`config show -f json` 的 `config_dir` 现指向账户目录；`status -f json` 新增顶层 `account` 键 / Contract change: `config_dir` now points at the account dir; `status -f json` gains a top-level `account` key
+
 ## [0.2.4] - 2026-07-10
 
 ### ✨ 新特性 / New Features

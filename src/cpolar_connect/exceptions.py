@@ -27,6 +27,12 @@ class TunnelError(CpolarConnectError):
     pass
 
 
+class TunnelNotFoundError(TunnelError):
+    """No active tunnel exists (cpolar likely not running on the server)"""
+
+    pass
+
+
 class SSHError(CpolarConnectError):
     """SSH connection and key management errors"""
 

@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Optional
 
 import click
@@ -15,8 +16,22 @@ from rich.console import Console
 
 from . import __version__
 from .auth import CpolarAuth
-from .config import ConfigError, ConfigManager
-from .exceptions import AuthenticationError, NetworkError, SSHError, TunnelError
+from .config import (
+    DEFAULT_ACCOUNT,
+    ConfigError,
+    ConfigManager,
+    read_current_account,
+    resolve_account,
+    validate_account_name,
+    write_current_account,
+)
+from .exceptions import (
+    AuthenticationError,
+    NetworkError,
+    SSHError,
+    TunnelError,
+    TunnelNotFoundError,
+)
 from .i18n import _
 from .prompts import Prompts
 from .ssh import SSHManager
@@ -50,10 +65,12 @@ def _pad_label(label: str, target_width: int) -> str:
     return label + " " * max(0, padding)
 
 
-def _setup_logging(config_manager: ConfigManager):
+def _setup_logging(config_manager: Optional[ConfigManager] = None):
     """Configure rotating file logging under ~/.cpolar_connect/logs.
 
-    Priority for level: env CPOLAR_LOG_LEVEL > config.log_level > INFO
+    Priority for level: env CPOLAR_LOG_LEVEL > config.log_level > INFO.
+    Runs before account resolution, so config_manager is usually None;
+    _get_config_manager raises the level from config afterwards.
     """
     # Avoid duplicate handlers if CLI is re-entered
     root = logging.getLogger()
@@ -61,17 +78,19 @@ def _setup_logging(config_manager: ConfigManager):
         return
 
     level_name = os.environ.get("CPOLAR_LOG_LEVEL")
-    level = None
+    level = logging.INFO
     if level_name:
         level = getattr(logging, level_name.upper(), logging.INFO)
-    else:
+    elif config_manager is not None:
         try:
             cfg = config_manager.get_config()
             level = getattr(logging, cfg.log_level.upper(), logging.INFO)
         except Exception:
             level = logging.INFO
 
-    log_path = config_manager.logs_path / "cpolar.log"
+    logs_dir = Path.home() / ".cpolar_connect" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "cpolar.log"
     handler = RotatingFileHandler(
         str(log_path), maxBytes=1_000_000, backupCount=3, encoding="utf-8"
     )
@@ -82,6 +101,55 @@ def _setup_logging(config_manager: ConfigManager):
     handler.setFormatter(fmt)
     root.setLevel(level)
     root.addHandler(handler)
+
+
+def _account_callback(ctx, param, value):
+    if value is not None:
+        # ctx.meta is shared across the context tree, so both spellings
+        # (`cpc -a x cmd` and `cpc cmd -a x`) land in the same place
+        ctx.meta["account"] = value
+    return value
+
+
+def account_option(f):
+    """Register -a/--account on a command; the value lands in ctx.meta.
+
+    click group options must precede the subcommand; registering the same
+    option on every command makes both spellings work.
+    """
+    return click.option(
+        "-a",
+        "--account",
+        expose_value=False,
+        callback=_account_callback,
+        metavar="NAME",
+        help="Use account for this invocation / 本次调用使用指定账户",
+    )(f)
+
+
+def _get_config_manager(ctx) -> ConfigManager:
+    """Lazily build the ConfigManager once -a/env/current are resolvable."""
+    root = ctx.find_root()
+    if root.obj.get("config_manager") is None:
+        p: Prompts = root.obj["prompts"]
+        try:
+            name = resolve_account(ctx.meta.get("account"))
+            config_manager = ConfigManager(account=name)
+            config_manager.ensure_migrated()
+        except ConfigError as e:
+            p.log_error(_("error.config", error=e))
+            sys.exit(1)
+        # Honor the account's configured log level (env var still wins)
+        if not os.environ.get("CPOLAR_LOG_LEVEL"):
+            try:
+                cfg = config_manager.get_config()
+                level = getattr(logging, cfg.log_level.upper(), None)
+                if level is not None:
+                    logging.getLogger().setLevel(level)
+            except ConfigError:
+                pass
+        root.obj["config_manager"] = config_manager
+    return root.obj["config_manager"]
 
 
 def _verify_cpolar_credentials(
@@ -109,9 +177,20 @@ def _verify_cpolar_credentials(
         return False
 
 
+def _print_server_hint(p: Prompts) -> None:
+    """Tell the user which commands to run on the server to bring up cpolar."""
+    p.log_info(_("tunnel.server_hint"))
+    for key in (
+        "doctor.cmd.server.status",
+        "doctor.cmd.server.start",
+        "doctor.cmd.server.tunnel",
+    ):
+        p.log_info(f"  {_(key)}")
+
+
 def _run_connect(ctx):
     """Run the connection flow with step-style output."""
-    config_manager = ctx.obj["config_manager"]
+    config_manager = _get_config_manager(ctx)
     p: Prompts = ctx.obj["prompts"]
     skip_confirm = ctx.obj["skip_confirm"]
     output_format = ctx.obj["output_format"]
@@ -177,7 +256,9 @@ def _run_connect(ctx):
 
         # Step 3: Test SSH connection
         p.step(_("prompts.step_ssh"))
-        ssh_manager = SSHManager(config)
+        ssh_manager = SSHManager(
+            config, known_hosts_path=config_manager.known_hosts_file
+        )
         p.spinner_message(_("ssh.testing_connection"))
         can_connect = ssh_manager.test_ssh_connection(
             tunnel_info.hostname, tunnel_info.port
@@ -253,6 +334,10 @@ def _run_connect(ctx):
             p.log_info(f"ssh {ssh_manager.host_alias}")
             p.outro(_("prompts.setup_complete"))
 
+    except TunnelNotFoundError as e:
+        p.log_error(_("error.connection_failed", error=e))
+        _print_server_hint(p)
+        sys.exit(1)
     except (AuthenticationError, TunnelError, SSHError, NetworkError) as e:
         p.log_error(_("error.connection_failed", error=e))
         sys.exit(1)
@@ -281,19 +366,22 @@ def _run_connect(ctx):
     help="Output format / 输出格式",
 )
 @click.option("-q", "--quiet", is_flag=True, help="Quiet mode / 静默模式")
+@account_option
 @click.help_option("--help", "-h", help="Show help / 显示帮助")
 @click.pass_context
 def cli(ctx, yes, output_format, quiet):
     """Manage cpolar tunnels and SSH / 管理 cpolar 隧道与 SSH"""
     ctx.ensure_object(dict)
-    ctx.obj["config_manager"] = ConfigManager()
+    # Built lazily by _get_config_manager: the subcommand's own -a option
+    # is not parsed yet when this callback runs
+    ctx.obj["config_manager"] = None
     ctx.obj["skip_confirm"] = yes
     ctx.obj["output_format"] = output_format
     ctx.obj["quiet"] = quiet
     ctx.obj["prompts"] = Prompts(skip_confirm=yes, quiet=quiet)
 
     # Configure logging as early as possible
-    _setup_logging(ctx.obj["config_manager"])
+    _setup_logging()
 
     # If no command is provided, run the default action (connect)
     if ctx.invoked_subcommand is None:
@@ -312,13 +400,30 @@ def cli(ctx, yes, output_format, quiet):
 @click.option(
     "--ports", help="Ports to forward (comma-separated) / 转发端口（逗号分隔）"
 )
+@account_option
 @click.help_option("--help", "-h", help="Show help / 显示帮助")
 @click.pass_context
 def init(ctx, force, username, server_user, ports):
-    """Initialize configuration / 初始化配置"""
-    config_manager = ctx.obj["config_manager"]
+    """Initialize configuration / 初始化配置
+
+    With -a NAME, creates/reinitializes that account and switches to it
+    / 配合 -a 可创建新账户并切换过去
+    """
+    config_manager = _get_config_manager(ctx)
     p: Prompts = ctx.obj["prompts"]
     skip_confirm = ctx.obj["skip_confirm"]
+
+    # Derived alias must be unique across accounts (host key trust model)
+    derived_alias = (
+        "cpolar-server"
+        if config_manager.account == DEFAULT_ACCOUNT
+        else f"cpolar-{config_manager.account}"
+    )
+    conflict = config_manager.find_alias_conflict(derived_alias)
+    if conflict:
+        p.log_error(_("error.alias_conflict", alias=derived_alias, other=conflict))
+        sys.exit(1)
+    previous_current = read_current_account() or DEFAULT_ACCOUNT
 
     # Check existing config
     if config_manager.config_exists() and not force:
@@ -448,11 +553,18 @@ def init(ctx, force, username, server_user, ports):
         "ports": ports_list,
         "auto_connect": auto_connect,
     }
+    if config_manager.account != DEFAULT_ACCOUNT:
+        config_data["ssh_host_alias"] = derived_alias
 
     try:
         config_manager.create_config(config_data)
         if password:
             config_manager.set_password(username, password)
+
+        # A freshly initialized account is almost certainly the one to use
+        if config_manager.account != previous_current:
+            write_current_account(config_manager.account)
+            p.log_success(_("info.account_switched", name=config_manager.account))
 
         p.log("")
         p.log_info(_("info.env_password_tip"))
@@ -474,6 +586,7 @@ def config():
 
 @config.command("get")
 @click.argument("key", metavar="KEY")
+@account_option
 @click.help_option("--help", "-h", help="Show help / 显示帮助")
 @click.pass_context
 def config_get(ctx, key):
@@ -481,7 +594,7 @@ def config_get(ctx, key):
 
     KEY: dot-notation, e.g. `server.user` / 点号路径，如 `server.user`
     """
-    config_manager = ctx.obj["config_manager"]
+    config_manager = _get_config_manager(ctx)
     p: Prompts = ctx.obj["prompts"]
     try:
         value = config_manager.get(key)
@@ -497,6 +610,7 @@ def config_get(ctx, key):
 @config.command("set")
 @click.argument("key", metavar="KEY")
 @click.argument("value", metavar="VALUE")
+@account_option
 @click.help_option("--help", "-h", help="Show help / 显示帮助")
 @click.pass_context
 def config_set(ctx, key, value):
@@ -505,7 +619,7 @@ def config_set(ctx, key, value):
     KEY: dot-notation, e.g. `server.ports` / 点号路径，如 `server.ports`
     VALUE: string; ports accept comma list / 字符串；端口可用逗号分隔
     """
-    config_manager = ctx.obj["config_manager"]
+    config_manager = _get_config_manager(ctx)
     p: Prompts = ctx.obj["prompts"]
     skip_confirm = ctx.obj["skip_confirm"]
 
@@ -546,11 +660,12 @@ def config_set(ctx, key, value):
 
 
 @config.command("edit")
+@account_option
 @click.help_option("--help", "-h", help="Show help / 显示帮助")
 @click.pass_context
 def config_edit(ctx):
     """Edit configuration file / 编辑配置文件"""
-    config_manager = ctx.obj["config_manager"]
+    config_manager = _get_config_manager(ctx)
     p: Prompts = ctx.obj["prompts"]
     try:
         config_manager.edit()
@@ -561,11 +676,12 @@ def config_edit(ctx):
 
 
 @config.command("show")
+@account_option
 @click.help_option("--help", "-h", help="Show help / 显示帮助")
 @click.pass_context
 def config_show(ctx):
     """Show current configuration / 显示当前配置"""
-    config_manager = ctx.obj["config_manager"]
+    config_manager = _get_config_manager(ctx)
     output_format = ctx.obj["output_format"]
     p: Prompts = ctx.obj["prompts"]
 
@@ -591,6 +707,7 @@ def config_show(ctx):
                 + ("中文" if data["language"] == "zh" else "English")
             )
 
+            table.add_row(_("config.account"), config_manager.account)
             table.add_row(_("config.username"), data["username"])
             table.add_row(_("config.base_url"), data["base_url"])
             table.add_row(_("config.server_user"), data["server_user"])
@@ -618,22 +735,24 @@ def config_show(ctx):
 
 
 @config.command("path")
+@account_option
 @click.help_option("--help", "-h", help="Show help / 显示帮助")
 @click.pass_context
 def config_path(ctx):
     """Show config and logs path / 显示配置与日志路径"""
-    config_manager = ctx.obj["config_manager"]
+    config_manager = _get_config_manager(ctx)
     p: Prompts = ctx.obj["prompts"]
     p.log(f"{_('config.config_file')}: {config_manager.config_path}")
     p.log(f"{_('config.logs_dir')}: {config_manager.logs_path}")
 
 
 @config.command("clear-password")
+@account_option
 @click.help_option("--help", "-h", help="Show help / 显示帮助")
 @click.pass_context
 def config_clear_password(ctx):
     """Clear stored password / 清除已存密码"""
-    config_manager = ctx.obj["config_manager"]
+    config_manager = _get_config_manager(ctx)
     p: Prompts = ctx.obj["prompts"]
     try:
         config = config_manager.get_config()
@@ -648,11 +767,12 @@ def config_clear_password(ctx):
 
 
 @config.command("clear-hostkey")
+@account_option
 @click.help_option("--help", "-h", help="Show help / 显示帮助")
 @click.pass_context
 def config_clear_hostkey(ctx):
     """Clear stored server host key / 清除已存的服务器主机密钥"""
-    config_manager = ctx.obj["config_manager"]
+    config_manager = _get_config_manager(ctx)
     p: Prompts = ctx.obj["prompts"]
     try:
         cleared = config_manager.clear_host_keys()
@@ -665,8 +785,138 @@ def config_clear_hostkey(ctx):
         sys.exit(1)
 
 
+@cli.command("use")
+@click.argument("name", metavar="NAME")
+@account_option
+@click.help_option("--help", "-h", help="Show help / 显示帮助")
+@click.pass_context
+def use_account(ctx, name):
+    """Switch current account / 切换当前账户"""
+    p: Prompts = ctx.obj["prompts"]
+    try:
+        validate_account_name(name)
+        config_manager = ConfigManager()
+        config_manager.ensure_migrated()
+        accounts = {a["name"] for a in config_manager.list_accounts()}
+        if name not in accounts:
+            p.log_error(_("error.account_not_found", name=name))
+            if accounts:
+                p.log_info(
+                    _("info.available_accounts", names=", ".join(sorted(accounts)))
+                )
+            sys.exit(1)
+        write_current_account(name)
+        p.log_success(_("info.account_switched", name=name))
+    except ConfigError as e:
+        p.log_error(_("error.config", error=e))
+        sys.exit(1)
+
+
+@cli.group("account")
+@click.help_option("--help", "-h", help="Show help / 显示帮助")
+def account_group():
+    """Account management / 账户管理"""
+    pass
+
+
+@account_group.command("list")
+@click.help_option("--help", "-h", help="Show help / 显示帮助")
+@click.pass_context
+def account_list(ctx):
+    """List accounts / 列出账户"""
+    output_format = ctx.obj["output_format"]
+    p: Prompts = ctx.obj["prompts"]
+    config_manager = ConfigManager()
+    config_manager.ensure_migrated()
+    accounts = config_manager.list_accounts()
+
+    if output_format == "json":
+        print(json.dumps(accounts, indent=2))
+        return
+
+    if not accounts:
+        p.log_info(_("info.no_accounts"))
+        return
+
+    from rich.table import Table
+
+    table = Table(
+        title=_("account.list_title"), show_header=True, header_style="bold magenta"
+    )
+    table.add_column(_("account.column.name"), style="cyan")
+    table.add_column(_("account.column.username"), style="white")
+    table.add_column(_("account.column.alias"), style="white")
+    table.add_column(_("account.column.current"), justify="center")
+    for info in accounts:
+        table.add_row(
+            info["name"],
+            info["username"],
+            info["ssh_host_alias"],
+            "✓" if info["is_current"] else "",
+        )
+    console.print(table)
+
+
+# `use` lives at top level; give its natural companion the same treatment
+cli.add_command(account_list, "list")
+
+
+@account_group.command("remove")
+@click.argument("name", metavar="NAME")
+@click.option(
+    "-y", "--yes", "yes_flag", is_flag=True, help="Skip confirmation / 跳过确认"
+)
+@click.help_option("--help", "-h", help="Show help / 显示帮助")
+@click.pass_context
+def account_remove(ctx, name, yes_flag):
+    """Remove an account / 删除账户"""
+    p: Prompts = ctx.obj["prompts"]
+    skip = yes_flag or ctx.obj["skip_confirm"]
+    try:
+        validate_account_name(name)
+        config_manager = ConfigManager()
+        config_manager.ensure_migrated()
+        existing = {a["name"] for a in config_manager.list_accounts()}
+        if name not in existing:
+            p.log_error(_("error.account_not_found", name=name))
+            sys.exit(1)
+
+        if not skip and not p.confirm(
+            _("account.confirm_remove", name=name), default=False
+        ):
+            p.outro_cancel(_("prompts.cancelled"))
+            return
+
+        # Clean the account's Host block before its config disappears
+        try:
+            account_cm = ConfigManager(account=name)
+            cfg = account_cm.get_config()
+            SSHManager(
+                cfg, known_hosts_path=account_cm.known_hosts_file
+            ).remove_host_block()
+        except (ConfigError, SSHError) as e:
+            p.log_warn(_("warning.hostblock_cleanup_skipped", error=e))
+
+        config_manager.remove_account(name)
+
+        # Fall back if the current account was removed
+        if (read_current_account() or DEFAULT_ACCOUNT) == name:
+            if (config_manager.accounts_dir / DEFAULT_ACCOUNT).is_dir():
+                write_current_account(DEFAULT_ACCOUNT)
+            else:
+                current_file = config_manager.config_dir / "current"
+                if current_file.exists():
+                    current_file.unlink()
+
+        p.log_success(_("account.removed", name=name))
+    except ConfigError as e:
+        p.log_error(_("error.config", error=e))
+        sys.exit(1)
+
+
 @cli.command("language")
 @click.argument("lang", metavar="LANG", type=click.Choice(["zh", "en"]))
+@account_option
 @click.help_option("--help", "-h", help="Show help / 显示帮助")
 @click.pass_context
 def set_language(ctx, lang):
@@ -674,7 +924,7 @@ def set_language(ctx, lang):
 
     LANG: zh/en / 语言：zh/en
     """
-    config_manager = ctx.obj["config_manager"]
+    config_manager = _get_config_manager(ctx)
     p: Prompts = ctx.obj["prompts"]
 
     # Normalize language code
@@ -708,13 +958,14 @@ def set_language(ctx, lang):
 
 
 @cli.command("doctor")
+@account_option
 @click.help_option("--help", "-h", help="Show help / 显示帮助")
 @click.pass_context
 def doctor_cmd(ctx):
     """Diagnose connection issues / 诊断连接问题"""
     from .doctor import Doctor
 
-    doctor = Doctor()
+    doctor = Doctor(config_manager=_get_config_manager(ctx))
     success = doctor.run()
 
     if not success:
@@ -722,6 +973,7 @@ def doctor_cmd(ctx):
 
 
 @cli.command("status")
+@account_option
 @click.help_option("--help", "-h", help="Show help / 显示帮助")
 @click.pass_context
 def status_cmd(ctx):
@@ -729,7 +981,7 @@ def status_cmd(ctx):
     from rich.panel import Panel
     from rich.table import Table
 
-    config_manager: ConfigManager = ctx.obj["config_manager"]
+    config_manager: ConfigManager = _get_config_manager(ctx)
     p: Prompts = ctx.obj["prompts"]
     output_format = ctx.obj["output_format"]
 
@@ -744,6 +996,7 @@ def status_cmd(ctx):
         """Output status as JSON"""
         data = {
             "status": "online" if online else "offline",
+            "account": config_manager.account,
             "tunnel": None,
             "config": {
                 "username": config.username,
@@ -781,6 +1034,7 @@ def status_cmd(ctx):
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column(_("status.column.field"), style="cyan", width=22)
         table.add_column(_("status.column.value"), style="white")
+        table.add_row(_("status.field.account"), config_manager.account)
         if tunnel_info is not None:
             table.add_row(_("status.field.tunnel"), getattr(tunnel_info, "url", ""))
             table.add_row(_("status.field.host"), getattr(tunnel_info, "hostname", ""))
@@ -844,6 +1098,12 @@ def status_cmd(ctx):
                     local_only=True,
                     reason_msg=_("status.auth_failed", error=str(e)),
                 )
+        except TunnelNotFoundError as e:
+            if output_format == "json":
+                _output_json(config, online=False, error=f"tunnel_not_found: {e}")
+            else:
+                _render(config, tunnel_info=None, local_only=True, reason_msg=str(e))
+                _print_server_hint(p)
         except (TunnelError, NetworkError) as e:
             if output_format == "json":
                 _output_json(config, online=False, error=f"network_failed: {e}")

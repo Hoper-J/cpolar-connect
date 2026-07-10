@@ -5,6 +5,8 @@ Configuration management for Cpolar Connect
 import json
 import logging
 import os
+import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -20,6 +22,58 @@ DEFAULT_BASE_URL = "https://dashboard.cpolar.com"
 
 # Sentinel to distinguish "no default given" from an explicit default of None
 _MISSING = object()
+
+ACCOUNTS_DIR_NAME = "accounts"
+DEFAULT_ACCOUNT = "default"
+RESERVED_ACCOUNT_NAMES = frozenset(
+    {"current", "logs", "accounts", "config.json", ".password", "known_hosts"}
+)
+_ACCOUNT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def _root_dir() -> Path:
+    return Path.home() / ".cpolar_connect"
+
+
+def validate_account_name(name: str) -> str:
+    """Validate an account name used as a path component and alias source."""
+    if not name or name in RESERVED_ACCOUNT_NAMES or not _ACCOUNT_NAME_RE.match(name):
+        raise ConfigError(_("error.invalid_account_name", name=name))
+    accounts_dir = _root_dir() / ACCOUNTS_DIR_NAME
+    resolved = (accounts_dir / name).resolve()
+    if resolved.parent != accounts_dir.resolve():
+        raise ConfigError(_("error.invalid_account_name", name=name))
+    return name
+
+
+def read_current_account() -> Optional[str]:
+    """Read the current-account file; empty/missing means unset."""
+    current_file = _root_dir() / "current"
+    if not current_file.exists():
+        return None
+    try:
+        name = current_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return name or None
+
+
+def write_current_account(name: str) -> None:
+    """Atomically record the current account (temp + replace)."""
+    validate_account_name(name)
+    current_file = _root_dir() / "current"
+    current_file.parent.mkdir(parents=True, exist_ok=True)
+    temp = current_file.with_suffix(".tmp")
+    temp.write_text(name + "\n", encoding="utf-8")
+    temp.replace(current_file)
+
+
+def resolve_account(explicit: Optional[str]) -> str:
+    """Resolve the account: explicit (-a) > CPOLAR_ACCOUNT > current > default."""
+    name = explicit or os.getenv("CPOLAR_ACCOUNT") or read_current_account()
+    if name is None:
+        return DEFAULT_ACCOUNT
+    return validate_account_name(name)
 
 
 class CpolarConfig(BaseModel):
@@ -64,6 +118,14 @@ class CpolarConfig(BaseModel):
             raise ValueError("SSH key size must be at least 1024 bits")
         return v
 
+    @field_validator("ssh_host_alias")
+    @classmethod
+    def validate_ssh_host_alias(cls, v: str) -> str:
+        """Alias is written verbatim into ~/.ssh/config; keep it inert."""
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", v):
+            raise ValueError(f"Invalid ssh_host_alias: {v!r}")
+        return v
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
@@ -90,11 +152,14 @@ class CpolarConfig(BaseModel):
 class ConfigManager:
     """Configuration manager for Cpolar Connect"""
 
-    def __init__(self):
-        self.config_dir = Path.home() / ".cpolar_connect"
-        self.config_file = self.config_dir / "config.json"
-        self.password_file = self.config_dir / ".password"
-        self.known_hosts_file = self.config_dir / "known_hosts"
+    def __init__(self, account: Optional[str] = None):
+        self.account = validate_account_name(account) if account else DEFAULT_ACCOUNT
+        self.config_dir = _root_dir()
+        self.accounts_dir = self.config_dir / ACCOUNTS_DIR_NAME
+        self.account_dir = self.accounts_dir / self.account
+        self.config_file = self.account_dir / "config.json"
+        self.password_file = self.account_dir / ".password"
+        self.known_hosts_file = self.account_dir / "known_hosts"
         self.logs_dir = self.config_dir / "logs"
 
         self.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -105,6 +170,131 @@ class ConfigManager:
             logger.debug(f"Could not tighten config dir permissions: {e}")
 
         self._config: Optional[CpolarConfig] = None
+
+    def _ensure_account_dir(self) -> None:
+        """Create the account directory with owner-only permissions."""
+        self.account_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+        self.account_dir.chmod(0o700)
+        self.accounts_dir.chmod(0o700)
+
+    def list_accounts(self) -> List[Dict[str, Any]]:
+        """List accounts with name, username, alias and current marker."""
+        current = read_current_account() or DEFAULT_ACCOUNT
+        result: List[Dict[str, Any]] = []
+        if not self.accounts_dir.exists():
+            return result
+        for entry in sorted(self.accounts_dir.iterdir()):
+            if not entry.is_dir():
+                continue
+            try:
+                validate_account_name(entry.name)
+            except ConfigError:
+                logger.warning(f"Skipping invalid account dir: {entry.name}")
+                continue
+            info: Dict[str, Any] = {
+                "name": entry.name,
+                "username": "",
+                "ssh_host_alias": "",
+                "is_current": entry.name == current,
+            }
+            cfg_file = entry / "config.json"
+            if cfg_file.exists():
+                try:
+                    data = json.loads(cfg_file.read_text(encoding="utf-8"))
+                    info["username"] = data.get("username", "")
+                    info["ssh_host_alias"] = data.get("ssh_host_alias", "cpolar-server")
+                except (OSError, json.JSONDecodeError):
+                    pass
+            result.append(info)
+        return result
+
+    def remove_account(self, name: str) -> None:
+        """Delete an account directory (config, password, host keys)."""
+        validate_account_name(name)
+        target = self.accounts_dir / name
+        if not target.is_dir():
+            raise ConfigError(_("error.account_not_found", name=name))
+        shutil.rmtree(target)
+
+    def find_alias_conflict(self, alias: str) -> Optional[str]:
+        """Return the name of another account already using this alias."""
+        for info in self.list_accounts():
+            if info["name"] != self.account and info["ssh_host_alias"] == alias:
+                return info["name"]
+        return None
+
+    # Migration order is load-bearing: config.json moves last and acts as
+    # the commit point, so any interrupted state still triggers a re-run.
+    _MIGRATION_ORDER = (".password", "known_hosts", "config.json")
+
+    def ensure_migrated(self) -> bool:
+        """Migrate the legacy single-account layout into accounts/default.
+
+        Idempotent and safe to re-run after interruption or concurrently.
+        Returns True if any migration work happened.
+        """
+        legacy = [f for f in self._MIGRATION_ORDER if (self.config_dir / f).exists()]
+        if not legacy:
+            return False
+
+        default_dir = self.accounts_dir / DEFAULT_ACCOUNT
+        default_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+        default_dir.chmod(0o700)
+        self.accounts_dir.chmod(0o700)
+
+        old_known_hosts = self.config_dir / "known_hosts"
+        new_known_hosts = default_dir / "known_hosts"
+
+        for name in self._MIGRATION_ORDER:
+            src = self.config_dir / name
+            dst = default_dir / name
+            if not src.exists():
+                continue
+            if dst.exists():
+                # Never overwrite; keep the legacy file for the user to judge
+                bak = self.config_dir / f"{name}.pre-migration.bak"
+                src.rename(bak)
+                logger.warning(
+                    f"Migration target {dst} already exists; "
+                    f"kept legacy file as {bak}"
+                )
+                continue
+            try:
+                src.rename(dst)
+            except FileNotFoundError:
+                continue  # concurrent migrator won; treat as done
+            if name in (".password", "known_hosts"):
+                dst.chmod(0o600)
+
+        if read_current_account() is None:
+            write_current_account(DEFAULT_ACCOUNT)
+
+        self._rewrite_ssh_config_path(old_known_hosts, new_known_hosts)
+        logger.info("Migrated legacy layout to accounts/default")
+        return True
+
+    def _rewrite_ssh_config_path(self, old_path: Path, new_path: Path) -> None:
+        """Point existing ~/.ssh/config Host blocks at the migrated file.
+
+        v0.2.4 wrote the absolute known_hosts path into the user's Host
+        block; without this rewrite, direct `ssh <alias>` would silently
+        re-TOFU against a missing file.
+        """
+        ssh_config = Path.home() / ".ssh" / "config"
+        if not ssh_config.exists():
+            return
+        try:
+            content = ssh_config.read_text(encoding="utf-8")
+            needle = f"UserKnownHostsFile {old_path}"
+            if needle not in content:
+                return
+            ssh_config.write_text(
+                content.replace(needle, f"UserKnownHostsFile {new_path}"),
+                encoding="utf-8",
+            )
+            logger.info("Rewrote UserKnownHostsFile path in ~/.ssh/config")
+        except OSError as e:
+            logger.warning(f"Could not rewrite ~/.ssh/config: {e}")
 
     def config_exists(self) -> bool:
         """Check if configuration file exists"""
@@ -130,6 +320,7 @@ class ConfigManager:
     def save_config(self, config: CpolarConfig) -> None:
         """Save configuration to file"""
         try:
+            self._ensure_account_dir()
             config_data = config.model_dump()
 
             # Write to temp file first, then rename (atomic write)
@@ -261,6 +452,15 @@ class ConfigManager:
             else:
                 raise KeyError(_("error.config_key_not_found", key=key))
 
+        # Alias uniqueness across accounts (host key trust model)
+        new_alias = config_dict.get("ssh_host_alias")
+        if new_alias and new_alias != config.ssh_host_alias:
+            conflict = self.find_alias_conflict(new_alias)
+            if conflict:
+                raise ConfigError(
+                    _("error.alias_conflict", alias=new_alias, other=conflict)
+                )
+
         # Create new config and save
         try:
             updated_config = CpolarConfig(**config_dict)
@@ -302,6 +502,7 @@ class ConfigManager:
         config = self.get_config()
         password_status = self._get_password_status(config.username)
         return {
+            "account": self.account,
             "username": config.username,
             "base_url": config.base_url,
             "server_user": config.server_user,
@@ -313,7 +514,7 @@ class ConfigManager:
             "log_level": config.log_level,
             "language": config.language,
             "password_status": password_status,
-            "config_dir": str(self.config_dir),
+            "config_dir": str(self.account_dir),
         }
 
     def _get_password_status(self, username: str) -> str:
@@ -329,7 +530,7 @@ class ConfigManager:
 
         Priority:
         1. CPOLAR_PASSWORD environment variable
-        2. Password stored in ~/.cpolar_connect/.password
+        2. Password stored in the account's .password file
         """
         # Try environment variable first
         password = os.getenv("CPOLAR_PASSWORD")
@@ -349,6 +550,7 @@ class ConfigManager:
     def set_password(self, username: str, password: str) -> None:
         """Store password in a file created with owner-only permissions"""
         try:
+            self._ensure_account_dir()
             # O_CREAT with mode 0o600 avoids a transient window where the
             # file exists with umask-default (possibly world-readable) bits
             fd = os.open(

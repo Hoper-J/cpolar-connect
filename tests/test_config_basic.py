@@ -113,7 +113,8 @@ def test_config_dir_tightened_to_700(config_manager):
 
 
 def test_clear_host_keys_removes_file(config_manager):
-    known_hosts = config_manager.config_dir / "known_hosts"
+    known_hosts = config_manager.known_hosts_file
+    known_hosts.parent.mkdir(parents=True, exist_ok=True)
     known_hosts.write_text("cpolar-server ssh-rsa AAAA\n")
 
     assert config_manager.clear_host_keys() is True
@@ -124,7 +125,8 @@ def test_clear_host_keys_removes_file(config_manager):
 def test_cli_config_clear_hostkey(config_manager):
     from cpolar_connect.cli import cli
 
-    known_hosts = config_manager.config_dir / "known_hosts"
+    known_hosts = config_manager.known_hosts_file
+    known_hosts.parent.mkdir(parents=True, exist_ok=True)
     known_hosts.write_text("cpolar-server ssh-rsa AAAA\n")
 
     result = CliRunner().invoke(cli, ["config", "clear-hostkey"])

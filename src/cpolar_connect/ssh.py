@@ -7,11 +7,11 @@ import os
 import stat
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import paramiko
 
-from .config import CpolarConfig
+from .config import ACCOUNTS_DIR_NAME, CpolarConfig, resolve_account
 from .exceptions import HostKeyChangedError, SSHError
 from .i18n import _
 from .tunnel import TunnelInfo
@@ -45,7 +45,8 @@ class AliasHostKeyPolicy(paramiko.MissingHostKeyPolicy):
         if recorded is None:
             # Trust on first use: record under the alias
             known.add(self.alias, key.get_name(), key)
-            self.known_hosts_path.parent.mkdir(parents=True, exist_ok=True)
+            self.known_hosts_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            self.known_hosts_path.parent.chmod(0o700)
             known.save(str(self.known_hosts_path))
             self.known_hosts_path.chmod(0o600)
             logger.info(f"Recorded host key for {self.alias} ({key.get_name()})")
@@ -61,19 +62,30 @@ class AliasHostKeyPolicy(paramiko.MissingHostKeyPolicy):
 class SSHManager:
     """Manage SSH keys and connections"""
 
-    def __init__(self, config: CpolarConfig):
+    def __init__(self, config: CpolarConfig, known_hosts_path: Optional[Path] = None):
         """
         Initialize SSH manager with configuration
 
         Args:
             config: CpolarConfig object
+            known_hosts_path: Host key store (defaults to the resolved
+                account's known_hosts under ~/.cpolar_connect/accounts/)
         """
         self.config = config
         self.private_key_path = Path(os.path.expanduser(config.ssh_key_path))
         self.public_key_path = Path(str(self.private_key_path) + ".pub")
         self.ssh_dir = self.private_key_path.parent
         self.ssh_config_path = Path.home() / ".ssh" / "config"
-        self.known_hosts_path = Path.home() / ".cpolar_connect" / "known_hosts"
+        if known_hosts_path is not None:
+            self.known_hosts_path = known_hosts_path
+        else:
+            self.known_hosts_path = (
+                Path.home()
+                / ".cpolar_connect"
+                / ACCOUNTS_DIR_NAME
+                / resolve_account(None)
+                / "known_hosts"
+            )
         self.host_alias = config.ssh_host_alias
         self.server_user = config.server_user
         self.key_size = config.ssh_key_size
@@ -349,22 +361,7 @@ class SSHManager:
             lines = f.readlines()
 
         # Find and update/create host block
-        host_block_start = -1
-        host_block_end = -1
-
-        for i, line in enumerate(lines):
-            if line.strip() == f"Host {self.host_alias}":
-                host_block_start = i
-                # Find end of this host block
-                for j in range(i + 1, len(lines)):
-                    stripped = lines[j].strip()
-                    # Stop at empty line, next Host block, or Match block
-                    if not stripped or stripped.startswith(("Host ", "Match ")):
-                        host_block_end = j
-                        break
-                else:
-                    host_block_end = len(lines)
-                break
+        host_block_start, host_block_end = self._find_host_block(lines)
 
         # Prepare new host block
         new_block = [
@@ -400,6 +397,37 @@ class SSHManager:
             f.writelines(lines)
 
         logger.info(f"Updated SSH config: {self.ssh_config_path}")
+
+    def _find_host_block(self, lines: List[str]) -> Tuple[int, int]:
+        """Locate this alias's Host block; returns (start, end) or (-1, -1)."""
+        for i, line in enumerate(lines):
+            if line.strip() == f"Host {self.host_alias}":
+                # Find end: empty line, next Host block, or Match block
+                for j in range(i + 1, len(lines)):
+                    stripped = lines[j].strip()
+                    if not stripped or stripped.startswith(("Host ", "Match ")):
+                        return i, j
+                return i, len(lines)
+        return -1, -1
+
+    def remove_host_block(self) -> bool:
+        """Remove this alias's Host block from ~/.ssh/config.
+
+        Returns:
+            True if a block was removed, False if none existed
+        """
+        if not self.ssh_config_path.exists():
+            return False
+        with open(self.ssh_config_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        start, end = self._find_host_block(lines)
+        if start < 0:
+            return False
+        del lines[start:end]
+        with open(self.ssh_config_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        logger.info(f"Removed SSH config block for {self.host_alias}")
+        return True
 
     def build_ssh_command(
         self,

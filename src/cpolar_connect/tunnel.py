@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, Tuple
 import requests
 from bs4 import BeautifulSoup
 
-from .exceptions import NetworkError, TunnelError
+from .exceptions import NetworkError, TunnelError, TunnelNotFoundError
 from .i18n import _
 
 logger = logging.getLogger(__name__)
@@ -178,7 +178,7 @@ class TunnelManager:
             pass
 
         logger.error("Could not find tunnel URL in status page")
-        raise TunnelError(_("tunnel.not_found"))
+        raise TunnelNotFoundError(_("tunnel.not_found"))
 
     def _extract_hostname_and_port(self, tunnel_url: str) -> Tuple[str, int]:
         """

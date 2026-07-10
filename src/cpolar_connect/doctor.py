@@ -25,9 +25,9 @@ console = Console()
 class Doctor:
     """Diagnose connection problems"""
 
-    def __init__(self):
-        """Initialize doctor"""
-        self.config_manager = ConfigManager()
+    def __init__(self, config_manager=None):
+        """Initialize doctor with the (account-resolved) config manager"""
+        self.config_manager = config_manager or ConfigManager()
         self.checks: List[Tuple[str, bool, str, str]] = []
         self.has_error = False
         self.has_warning = False
@@ -85,10 +85,21 @@ class Doctor:
             if password:
                 # get_password prefers CPOLAR_PASSWORD; report the actual source
                 if os.environ.get("CPOLAR_PASSWORD"):
-                    message = _("doctor.password.env")
+                    self.add_check(
+                        _("doctor.check.password"), True, _("doctor.password.env")
+                    )
+                    # The env var is account-agnostic: warn multi-account users
+                    if len(self.config_manager.list_accounts()) > 1:
+                        self.add_check(
+                            _("doctor.check.password"),
+                            False,
+                            _("doctor.password.env_multi_account"),
+                            level="warning",
+                        )
                 else:
-                    message = _("doctor.password.found")
-                self.add_check(_("doctor.check.password"), True, message)
+                    self.add_check(
+                        _("doctor.check.password"), True, _("doctor.password.found")
+                    )
                 return True
             else:
                 self.add_check(

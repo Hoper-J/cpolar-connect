@@ -15,6 +15,11 @@ from cpolar_connect.config import CpolarConfig
 from cpolar_connect.exceptions import HostKeyChangedError
 from cpolar_connect.ssh import AliasHostKeyPolicy, SSHManager
 
+try:
+    from pydantic import ValidationError
+except ImportError:  # pragma: no cover
+    ValidationError = Exception
+
 ALIAS = "cpolar-server"
 
 
@@ -147,3 +152,71 @@ class TestSshConfigHostKeyDirectives:
         assert f"UserKnownHostsFile={manager.known_hosts_path}" in command
         assert "StrictHostKeyChecking=no" not in command
         assert "UserKnownHostsFile=/dev/null" not in command
+
+
+class TestAliasSafety:
+    """The alias is written verbatim into ~/.ssh/config; it must be inert."""
+
+    @pytest.fixture
+    def manager(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CPOLAR_LANG", "en")
+        monkeypatch.delenv("CPOLAR_ACCOUNT", raising=False)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        return SSHManager(_make_config(tmp_path))
+
+    def _written_config(self, manager, tmp_path):
+        from cpolar_connect.tunnel import TunnelInfo
+
+        tunnel = TunnelInfo(
+            url="tcp://1.tcp.cpolar.top:12345",
+            hostname="1.tcp.cpolar.top",
+            port=12345,
+        )
+        manager.update_ssh_config(tunnel, ports=[8888])
+        return tmp_path / ".ssh" / "config"
+
+    @pytest.mark.parametrize(
+        "bad", ["a b", "a\nProxyCommand x", "-oProxyCommand=x", 'a"b', ""]
+    )
+    def test_alias_validator_rejects_injection(self, bad):
+        with pytest.raises(ValidationError):
+            CpolarConfig(username="u", server_user="s", ssh_host_alias=bad)
+
+    def test_update_ssh_config_writes_single_host_line(self, manager, tmp_path):
+        content = self._written_config(manager, tmp_path).read_text(encoding="utf-8")
+        host_lines = [
+            line for line in content.splitlines() if line.strip().startswith("Host ")
+        ]
+        assert len(host_lines) == 1
+
+    def test_remove_host_block(self, manager, tmp_path):
+        cfg = self._written_config(manager, tmp_path)
+        cfg.write_text(
+            cfg.read_text(encoding="utf-8") + "\nHost other\n\tHostName o\n",
+            encoding="utf-8",
+        )
+        assert manager.remove_host_block() is True
+        content = cfg.read_text(encoding="utf-8")
+        assert f"Host {ALIAS}" not in content
+        assert "Host other" in content
+        assert manager.remove_host_block() is False
+
+    def test_policy_creates_parent_dir_700(self, tmp_path):
+        kh = tmp_path / "deep" / "known_hosts"
+        AliasHostKeyPolicy(ALIAS, kh).missing_host_key(None, "h", _make_key())
+        assert stat.S_IMODE(kh.parent.stat().st_mode) == 0o700
+
+    def test_ssh_manager_uses_injected_known_hosts_path(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        m = SSHManager(_make_config(tmp_path), known_hosts_path=tmp_path / "kh")
+        assert m.known_hosts_path == tmp_path / "kh"
+
+    def test_ssh_manager_default_known_hosts_follows_account(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("CPOLAR_ACCOUNT", "work")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        m = SSHManager(_make_config(tmp_path))
+        assert m.known_hosts_path == (
+            tmp_path / ".cpolar_connect" / "accounts" / "work" / "known_hosts"
+        )

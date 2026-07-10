@@ -51,3 +51,19 @@ def test_check_ssh_key_skips_permission_check_on_windows(doctor_with_key, monkey
     monkeypatch.setattr("platform.system", lambda: "Windows")
     doctor_with_key.check_ssh_key()
     assert not _permission_warnings(doctor_with_key)
+
+
+def test_doctor_warns_env_password_with_multiple_accounts(doctor_with_key, monkeypatch):
+    from cpolar_connect.config import ConfigManager
+
+    ConfigManager(account="second").create_config(
+        {
+            "username": "b@e.com",
+            "server_user": "u",
+            "ssh_host_alias": "cpolar-second",
+        }
+    )
+    monkeypatch.setenv("CPOLAR_PASSWORD", "x")
+    doctor_with_key.check_password()
+    warnings = [c for c in doctor_with_key.checks if not c[1] and c[3] == "warning"]
+    assert warnings

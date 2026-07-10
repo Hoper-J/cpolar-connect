@@ -26,6 +26,8 @@ The free version of cpolar resets tunnel addresses periodically, requiring you t
 - 🔄 **Auto-update**: Automatically fetch the latest cpolar tunnel address
 - ⚡ **One-click Connection**: No need to remember addresses and ports
 - 🔑 **SSH Keys**: Automatic configuration for passwordless login
+- 🛡️ **Host Key Verification**: Server host keys recorded and verified automatically (MITM protection)
+- 👥 **Multiple Accounts**: Switch between cpolar accounts with `cpc use` / `-a`
 - 📦 **Simple Installation**: Ready to use with one command
 
 ## 📦 Installation
@@ -201,7 +203,7 @@ Shows current tunnel address, SSH configuration, etc. (without connecting):
 ## 🔒 Password Management
 
 ### Option 1: Save During Init (Recommended)
-Enter password when running `cpolar-connect init`, it will be stored in `~/.cpolar_connect/.password` file.
+Enter password when running `cpolar-connect init`, it will be stored in `~/.cpolar_connect/accounts/<account>/.password`.
 
 ### Option 2: Environment Variable
 ```bash
@@ -216,7 +218,7 @@ Press Enter to skip password during init, then provide it via the `CPOLAR_PASSWO
 
 Since v0.2.4, the tool verifies the server's SSH host key to prevent man-in-the-middle attacks:
 
-- On first connection the server host key is recorded in `~/.cpolar_connect/known_hosts` (TOFU, keyed by the SSH alias, unaffected by tunnel address changes)
+- On first connection the server host key is recorded in `~/.cpolar_connect/accounts/<account>/known_hosts` (TOFU, keyed by the SSH alias, unaffected by tunnel address changes)
 - Every subsequent connection (including key tests and public key uploads) verifies against it; a mismatch refuses the connection
 - If the host key legitimately changed (e.g., server reinstall), reset it and reconnect:
 
@@ -225,6 +227,23 @@ cpolar-connect config clear-hostkey
 ```
 
 Additionally, the first connection tries your existing SSH keys (ssh-agent/default keys) to install the public key automatically — if accepted, no server password is needed at all.
+
+## 👥 Multiple Accounts
+
+Since v0.3.0, multiple cpolar accounts (for different servers) are supported. Every command is also available via the short entry `cpc` (identical to `cpolar-connect`):
+
+```bash
+cpc init -a work          # Create account "work" and switch to it (SSH alias: cpolar-work)
+cpc use home              # Switch the current account (sticky)
+cpc -a work               # Connect once using "work" without changing the current account
+cpc list                  # List all accounts (same as cpc account list)
+cpc account remove work   # Remove an account (also cleans its SSH config block)
+```
+
+- Account resolution priority: `-a` flag > `CPOLAR_ACCOUNT` env var > current account > `default`
+- Legacy single-account configs migrate automatically into the `default` account on first run — no action needed
+- Note: `CPOLAR_PASSWORD` applies to ALL accounts; unset it if accounts use different passwords
+- Known limitation: PyPI hosts an unrelated `cpc` package (competitive programming tool). If you have it installed, pipx/uv tool installs of this tool need `--force` due to the command name clash; the primary `cpolar-connect` entry is unaffected
 
 ## 📚 Use Cases
 
@@ -261,9 +280,10 @@ ssh cpolar-server
 
 ## 📁 File Locations
 
-- Configuration: `~/.cpolar_connect/config.json`
-- Password File: `~/.cpolar_connect/.password` (mode 600)
-- Host Keys: `~/.cpolar_connect/known_hosts`
+- Configuration: `~/.cpolar_connect/accounts/<account>/config.json`
+- Password File: `~/.cpolar_connect/accounts/<account>/.password` (mode 600)
+- Host Keys: `~/.cpolar_connect/accounts/<account>/known_hosts`
+- Current Account: `~/.cpolar_connect/current`
 - SSH Key: `~/.ssh/id_rsa_cpolar`
 - Log File: `~/.cpolar_connect/logs/cpolar.log`
 

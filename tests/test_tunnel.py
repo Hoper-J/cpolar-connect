@@ -178,3 +178,14 @@ class TestTunnelInfo:
         assert "ssh" in s
         assert "example.com" in s
         assert "1234" in s
+
+
+class TestTunnelNotFound:
+    def test_no_tunnel_raises_specific_error(self):
+        """Absence of tunnels must be distinguishable from other tunnel errors."""
+        from cpolar_connect.exceptions import TunnelNotFoundError
+
+        manager = TunnelManager.__new__(TunnelManager)
+        html = "<html><body><p>No tunnels here</p></body></html>"
+        with pytest.raises(TunnelNotFoundError):
+            manager._parse_tunnel_url(html)

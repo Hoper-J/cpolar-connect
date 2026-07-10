@@ -42,9 +42,10 @@ class FakeSSHManager:
     existing_keys_result = None  # set per-test
     connect_calls = []
 
-    def __init__(self, config):
+    def __init__(self, config, known_hosts_path=None):
         self.private_key_path = Path("/fake/id_rsa_cpolar")
         self.host_alias = config.ssh_host_alias
+        self.known_hosts_path = known_hosts_path
         self._test_results = iter([False, True])  # pre-check fails, retest passes
 
     def test_ssh_connection(self, hostname, port, timeout=10):
@@ -119,3 +120,29 @@ def test_existing_keys_failure_falls_back_to_password(connect_env, monkeypatch):
     assert result.exit_code == 0, result.output
     assert FakeSSHManager.password_used == "server-pass"
     assert FakeSSHManager.connect_calls
+
+
+def test_tunnel_not_found_shows_server_commands(connect_env, monkeypatch):
+    """When no tunnel exists, tell the user what to run on the server."""
+    from cpolar_connect.exceptions import TunnelNotFoundError
+
+    def raise_not_found(self):
+        raise TunnelNotFoundError("No active tunnel found")
+
+    monkeypatch.setattr(FakeTunnelManager, "get_tunnel_info", raise_not_found)
+    result = CliRunner().invoke(cli_module.cli, ["-y"])
+    assert result.exit_code == 1
+    assert "systemctl start cpolar" in result.output
+    assert "cpolar tcp 22" in result.output
+
+
+def test_status_tunnel_not_found_shows_server_commands(connect_env, monkeypatch):
+    from cpolar_connect.exceptions import TunnelNotFoundError
+
+    def raise_not_found(self):
+        raise TunnelNotFoundError("No active tunnel found")
+
+    monkeypatch.setattr(FakeTunnelManager, "get_tunnel_info", raise_not_found)
+    result = CliRunner().invoke(cli_module.cli, ["status"])
+    assert result.exit_code == 0, result.output
+    assert "systemctl start cpolar" in result.output
