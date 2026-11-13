@@ -36,6 +36,7 @@ from .exceptions import (
     TunnelError,
     TunnelNameNotFoundError,
     TunnelNotFoundError,
+    WindowsServerKeyError,
 )
 from .i18n import _
 from .prompts import Prompts
@@ -244,6 +245,14 @@ def _print_remedy(
         p.log_hint(
             _(
                 "hint.password_login_unavailable",
+                public_key=error.public_key_path,
+                account=account,
+            )
+        )
+    elif isinstance(error, WindowsServerKeyError):
+        p.log_hint(
+            _(
+                "hint.windows_server_key",
                 public_key=error.public_key_path,
                 account=account,
             )

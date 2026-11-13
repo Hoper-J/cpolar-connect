@@ -418,6 +418,37 @@ def test_first_connection_reports_the_new_key_once(monkeypatch, connect_env):
     assert "SSH key already exists" not in result.output
 
 
+def test_failed_install_on_a_windows_server_says_how_to_do_it_by_hand(
+    monkeypatch, connect_env
+):
+    """The automatic installation can fail (no PowerShell, a locked-down
+    server): the error alone would leave the user without a next step."""
+    from cpolar_connect.exceptions import WindowsServerKeyError
+
+    public_key = Path("/fake/id_rsa_cpolar.pub")
+
+    def cannot_install(self, hostname, port):
+        raise WindowsServerKeyError(
+            "Could not install the public key on the Windows server: Access denied",
+            public_key,
+        )
+
+    monkeypatch.setattr(
+        FakeSSHManager, "upload_public_key_with_existing_keys", cannot_install
+    )
+    monkeypatch.setattr(cli_module.Prompts, "password", _fail_if_prompted)
+
+    result = CliRunner().invoke(cli_module.cli, ["-y"])
+
+    assert result.exit_code == 1
+    assert "Access denied" in result.output
+    assert f"put the line in {public_key} into" in result.output
+    assert r"C:\ProgramData\ssh\administrators_authorized_keys" in result.output
+    assert r"C:\Users\<user>\.ssh\authorized_keys" in result.output
+    assert "cpolar-connect -a default config set ssh.key_path" in result.output
+    assert not FakeSSHManager.connect_calls
+
+
 def test_first_connection_to_unreachable_server_never_asks_for_a_password(
     connect_env, monkeypatch, tmp_path
 ):

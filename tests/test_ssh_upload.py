@@ -7,6 +7,7 @@ and how connection failures are told apart from rejected credentials.
 import base64
 import hashlib
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -25,6 +26,7 @@ from cpolar_connect.exceptions import (
     PasswordLoginUnavailableError,
     ServerUnreachableError,
     SSHError,
+    WindowsServerKeyError,
 )
 from cpolar_connect.ssh import SSHManager, _is_authorized
 from cpolar_connect.ssh import _ssh_offers_agent_keys as real_ssh_offers_agent_keys
@@ -52,8 +54,21 @@ class FakeStream:
         return self._data
 
 
+LINUX_SERVER = "SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13"
+WINDOWS_SERVER = "SSH-2.0-OpenSSH_for_Windows_9.5"
+
+
+class FakeTransport:
+    def __init__(self, remote_version):
+        self.remote_version = remote_version
+
+
 def make_fake_client_class(
-    exec_results=None, connect_error=None, reached=True, exec_error=None
+    exec_results=None,
+    connect_error=None,
+    reached=True,
+    exec_error=None,
+    server_version=LINUX_SERVER,
 ):
     """Build a scripted SSHClient class; exec results keyed by command substring.
 
@@ -94,6 +109,9 @@ def make_fake_client_class(
                         FakeStream(err, status),
                     )
             return (None, FakeStream(b"", 0), FakeStream(b"", 0))
+
+        def get_transport(self):
+            return FakeTransport(server_version)
 
         def close(self):
             self.closed = True
@@ -304,14 +322,15 @@ class TestUploadWithExistingKeys:
         assert client_cls.instances[0].closed
 
     def test_failed_remote_command_raises(self, monkeypatch, manager):
-        """Logged in, but the server cannot run the upload (e.g. Windows)."""
+        """Logged in, but the server could not run the upload."""
         client_cls = make_fake_client_class(
-            exec_results={"mkdir": (1, b"", b"'&&' is not a valid separator")}
+            exec_results={"mkdir": (1, b"", b"Read-only file system")}
         )
         monkeypatch.setattr(paramiko, "SSHClient", client_cls)
 
-        with pytest.raises(SSHError, match="not a valid separator"):
+        with pytest.raises(SSHError, match="Read-only file system") as failure:
             manager.upload_public_key_with_existing_keys("host", 22)
+        assert failure.type is SSHError  # nothing Windows-specific about it
 
     def test_host_key_change_propagates(self, monkeypatch, manager):
         client_cls = make_fake_client_class(
@@ -321,6 +340,138 @@ class TestUploadWithExistingKeys:
 
         with pytest.raises(HostKeyChangedError):
             manager.upload_public_key_with_existing_keys("host", 22)
+
+
+def _windows_report(status: str, detail: str) -> bytes:
+    """One report line, as the PowerShell installer prints it."""
+    encoded = base64.b64encode(detail.encode("utf-8")).decode("ascii")
+    return f"cpolar-connect: {status} {encoded}\r\n".encode("ascii")
+
+
+def _powershell_script(command: str) -> str:
+    """The script inside a `powershell.exe -EncodedCommand` command line."""
+    prefix = "powershell.exe -NoProfile -NonInteractive -EncodedCommand "
+    assert command.startswith(prefix)
+    return base64.b64decode(command[len(prefix) :]).decode("utf-16-le")
+
+
+ADMIN_KEYS = r"C:\ProgramData\ssh\administrators_authorized_keys"
+
+
+class TestUploadToWindowsServer:
+    """cmd and PowerShell cannot run the POSIX upload commands, and Windows
+    keeps keys elsewhere: the server gets one PowerShell script instead."""
+
+    def _server(self, monkeypatch, status=0, out=b"", err=b""):
+        client_cls = make_fake_client_class(
+            exec_results={"powershell.exe": (status, out, err)},
+            server_version=WINDOWS_SERVER,
+        )
+        monkeypatch.setattr(paramiko, "SSHClient", client_cls)
+        return client_cls
+
+    @pytest.mark.parametrize("password", [None, "secret"])
+    def test_key_is_installed_by_a_single_powershell_script(
+        self, monkeypatch, manager, password
+    ):
+        client_cls = self._server(
+            monkeypatch, out=_windows_report("installed", ADMIN_KEYS)
+        )
+
+        assert manager._upload_public_key("host", 22, password) is True
+
+        client = client_cls.instances[0]
+        (command,) = client.commands  # nothing else, no POSIX command
+        script = _powershell_script(command)
+        assert f"$key = '{OUR_LINE}'" in script
+        assert "administrators_authorized_keys" in script
+        assert r".ssh\authorized_keys" in script
+        assert client.closed
+
+    def test_command_line_has_nothing_for_the_default_shell_to_interpret(
+        self, monkeypatch, manager
+    ):
+        """It must read the same to cmd, PowerShell and a POSIX shell."""
+        client_cls = self._server(
+            monkeypatch, out=_windows_report("installed", ADMIN_KEYS)
+        )
+
+        manager.upload_public_key("host", 22, "secret")
+
+        (command,) = client_cls.instances[0].commands
+        assert re.fullmatch(r"[A-Za-z0-9+/=. -]+", command)
+
+    def test_key_that_is_already_there_is_not_added_again(self, monkeypatch, manager):
+        self._server(monkeypatch, out=_windows_report("present", ADMIN_KEYS))
+
+        assert manager.upload_public_key("host", 22, "secret") is False
+
+    def test_failure_reported_by_the_script_names_the_key_to_install_by_hand(
+        self, monkeypatch, manager
+    ):
+        client_cls = self._server(
+            monkeypatch,
+            status=1,
+            out=_windows_report("failed", "对路径的访问被拒绝。"),
+        )
+
+        with pytest.raises(WindowsServerKeyError, match="对路径的访问被拒绝") as e:
+            manager.upload_public_key("host", 22, "secret")
+        assert e.value.public_key_path == manager.public_key_path
+        assert client_cls.instances[0].closed
+
+    def test_powershell_that_cannot_be_started_is_reported(self, monkeypatch, manager):
+        self._server(
+            monkeypatch,
+            status=1,
+            err=b"'powershell.exe' is not recognized as an internal or external command",
+        )
+
+        with pytest.raises(WindowsServerKeyError, match="is not recognized"):
+            manager.upload_public_key_with_existing_keys("host", 22)
+
+    def test_report_without_a_clean_exit_is_not_trusted(self, monkeypatch, manager):
+        self._server(
+            monkeypatch, status=1, out=_windows_report("installed", ADMIN_KEYS)
+        )
+
+        with pytest.raises(WindowsServerKeyError):
+            manager.upload_public_key("host", 22, "secret")
+
+    def test_quotes_in_the_key_comment_stay_inside_the_string(
+        self, monkeypatch, manager
+    ):
+        """PowerShell also ends a string at the typographic single quotes."""
+        _use_key(manager, OUR_KEY, "o'brien\u2019s $(laptop)")
+        client_cls = self._server(
+            monkeypatch, out=_windows_report("installed", ADMIN_KEYS)
+        )
+
+        manager.upload_public_key("host", 22, "secret")
+
+        script = _powershell_script(client_cls.instances[0].commands[0])
+        key = OUR_LINE.rsplit(" ", 1)[0]
+        assert f"$key = '{key} o''brien\u2019\u2019s $(laptop)'\n" in script
+
+    def test_key_too_long_for_a_cmd_command_line_is_refused_unsent(
+        self, monkeypatch, manager
+    ):
+        _use_key(manager, OUR_KEY, "c" * 4000)  # as long as an 8192-bit RSA key
+        client_cls = self._server(monkeypatch)
+
+        with pytest.raises(WindowsServerKeyError, match="too long"):
+            manager.upload_public_key("host", 22, "secret")
+        assert client_cls.instances[0].commands == []
+
+    def test_posix_server_still_gets_the_posix_commands(self, monkeypatch, manager):
+        client_cls = make_fake_client_class()
+        monkeypatch.setattr(paramiko, "SSHClient", client_cls)
+
+        manager.upload_public_key("host", 22, "secret")
+
+        commands = client_cls.instances[0].commands
+        assert commands[0] == "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
+        assert not any("powershell" in command for command in commands)
 
 
 class TestConnectionTestHostKeySafety:
@@ -803,6 +954,9 @@ def make_shell_backed_client_class(shell, server_home):
                 FakeStream(result.stdout, result.returncode),
                 FakeStream(result.stderr, result.returncode),
             )
+
+        def get_transport(self):
+            return FakeTransport(LINUX_SERVER)
 
         def close(self):
             pass

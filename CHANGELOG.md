@@ -5,6 +5,7 @@
 ### ✨ 新特性 / New Features
 - 新增按账户的 `tunnel.name`：按 cpolar 控制台上的隧道名称选择隧道，多台机器可以共用一个 cpolar 账号；存在其他 SSH 隧道、同名隧道或指定的名称不在线时给出提示和修复命令；新增 `config unset` / New per-account `tunnel.name` picks a tunnel by its dashboard name, so several machines can share one cpolar login; other SSH tunnels, same-named tunnels and a name that is not online are reported together with the command that fixes them; new `config unset`
 - `ssh.key_path` 可指向已有的无口令 RSA/Ed25519/ECDSA 密钥（RSA、ECDSA 也可以是 PKCS#8 格式）；服务器已经接受该密钥时不再上传 / `ssh.key_path` may point at an existing passphrase-free RSA/Ed25519/ECDSA key (RSA and ECDSA also in PKCS#8 form); nothing is uploaded when the server already accepts it
+- 支持在 Windows 服务器上自动安装公钥：默认 shell 是 cmd 或 PowerShell 均可，管理员账户写入 `administrators_authorized_keys`，其他账户写入用户目录下的 `.ssh\authorized_keys` / The public key is installed automatically on Windows servers too: with cmd or PowerShell as the default shell, into `administrators_authorized_keys` for administrator accounts and the profile's `.ssh\authorized_keys` for others
 - 连不上服务器时（隧道域名无法解析、端口不通、握手失败）仍把隧道的当前地址写入 `~/.ssh/config`，并在报错后说明；同一账号下有多条候选隧道而未指定 `tunnel.name` 时除外（#3）/ When the server cannot be reached (the tunnel's host name does not resolve, nothing answers, the handshake fails), the tunnel's current address is still written to `~/.ssh/config` and the run says so; not when several tunnels qualify and no `tunnel.name` is set (#3)
 - `doctor` 新增“隧道域名解析”检查：有些网络不解析隧道域名（#3）/ `doctor` gains a "Tunnel DNS" check: some networks do not resolve tunnel host names (#3)
 

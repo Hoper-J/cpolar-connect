@@ -2,6 +2,8 @@
 SSH management module for Cpolar Connect
 """
 
+import base64
+import binascii
 import functools
 import io
 import logging
@@ -27,6 +29,7 @@ from .exceptions import (
     PasswordLoginUnavailableError,
     ServerUnreachableError,
     SSHError,
+    WindowsServerKeyError,
 )
 from .i18n import _
 from .tunnel import TunnelInfo
@@ -234,6 +237,103 @@ def _is_authorized(public_key_line: str, authorized_keys: str) -> bool:
         _authorized_key(line) == (key_type, key_data)
         for line in authorized_keys.split("\n")
     )
+
+
+def _is_windows_server(ssh: paramiko.SSHClient) -> bool:
+    """Whether the server introduced itself as OpenSSH for Windows."""
+    transport = ssh.get_transport()
+    return transport is not None and "windows" in transport.remote_version.lower()
+
+
+# Installs one public key on a Windows server and reports the outcome on a
+# single line. Windows keeps the keys of administrator accounts in one file
+# under ProgramData for as long as sshd_config says so (the default); every
+# other account has its own file in the user profile. The key lands on a line
+# of its own and is not added twice, as on a POSIX server; an existing entry
+# is recognized by the rule of _authorized_key. The file is taken byte for
+# byte, the way sshd reads it, whatever its encoding: PowerShell 5.1 writes
+# UTF-16 with `>`, and in such a file sshd finds no entry, nor a key that is
+# appended straight after its last line break. The shared file
+# gets the access rights sshd insists on (administrators and SYSTEM only,
+# named by their well-known SIDs so that it works in every display language).
+_WINDOWS_INSTALL_SCRIPT = "\n".join(
+    line.strip()
+    for line in r"""
+    $ErrorActionPreference = 'Stop'
+    function Report($status, $detail) {
+        $bytes = [Text.Encoding]::UTF8.GetBytes([string]$detail)
+        Write-Output ('cpolar-connect: ' + $status + ' ' + [Convert]::ToBase64String($bytes))
+    }
+    try {
+        $key = '__PUBLIC_KEY__'
+        $file = Join-Path $env:USERPROFILE '.ssh\authorized_keys'
+        $shared = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys'
+        $config = Join-Path $env:ProgramData 'ssh\sshd_config'
+        $isAdmin = (whoami.exe /groups | Out-String) -match 'S-1-5-32-544\b'
+        if ($isAdmin -and (Test-Path $config)) {
+            $pattern = '^\s*AuthorizedKeysFile\s.*administrators_authorized_keys'
+            if (Select-String -Path $config -Pattern $pattern -Quiet) { $file = $shared }
+        }
+        $folder = Split-Path $file
+        if (-not (Test-Path $folder)) { New-Item -ItemType Directory -Path $folder | Out-Null }
+        $bytes = New-Object byte[] 0
+        if (Test-Path $file) { $bytes = [IO.File]::ReadAllBytes($file) }
+        $text = [Text.Encoding]::GetEncoding(28591).GetString($bytes)
+        $wanted = $key -split '[ \t]+'
+        foreach ($line in ($text -split "`n")) {
+            $entry = $line.Split([char]0)[0].Trim(" `t`r")
+            if ($entry.StartsWith('#')) { continue }
+            if ($entry -notmatch '^(ssh-|ecdsa-|sk-)') {
+                $entry = $entry -replace '^(\\"|"(\\"|[^"])*"|[^ \t"])+[ \t]+', ''
+            }
+            $fields = @($entry -split '[ \t]+')
+            if ($fields.Count -ge 2 -and $fields[0] -ceq $wanted[0] -and $fields[1] -ceq $wanted[1]) {
+                Report 'present' $file
+                exit 0
+            }
+        }
+        $lineBreak = ''
+        if ($bytes.Length -gt 0 -and $bytes[$bytes.Length - 1] -ne 10) { $lineBreak = "`r`n" }
+        $utf8 = New-Object Text.UTF8Encoding $false
+        [IO.File]::AppendAllText($file, $lineBreak + $key + "`r`n", $utf8)
+        if ($file -eq $shared) {
+            icacls.exe $file /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F' | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "icacls.exe failed with exit code $LASTEXITCODE" }
+        }
+        Report 'installed' $file
+    } catch {
+        Report 'failed' $_.Exception.Message
+        exit 1
+    }
+    """.strip().splitlines()
+)
+
+_WINDOWS_REPORT = re.compile(
+    r"^cpolar-connect: (installed|present|failed) ([A-Za-z0-9+/=]*)\s*$", re.M
+)
+
+# cmd.exe, the default shell of OpenSSH for Windows, takes at most 8191
+# characters; the rest is headroom for how sshd wraps the command
+_WINDOWS_MAX_COMMAND = 8000
+
+
+def _powershell_literal(text: str) -> str:
+    """Escape text for a PowerShell single-quoted string.
+
+    PowerShell reads the typographic single quotes as string delimiters
+    too; like the plain one, each is escaped by doubling it.
+    """
+    return re.sub("['\u2018\u2019\u201a\u201b]", lambda m: m.group(0) * 2, text)
+
+
+def _powershell_command(script: str) -> str:
+    """A command line that runs a PowerShell script from any shell.
+
+    The script travels base64-encoded, so that the server's default shell
+    (cmd, PowerShell or a POSIX shell) finds nothing in it to interpret.
+    """
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return f"powershell.exe -NoProfile -NonInteractive -EncodedCommand {encoded}"
 
 
 class AliasHostKeyPolicy(paramiko.MissingHostKeyPolicy):
@@ -743,6 +843,51 @@ class SSHManager:
             )
         return output
 
+    def _install_key_on_windows(
+        self, ssh: paramiko.SSHClient, public_key_text: str
+    ) -> bool:
+        """Install the public key on a Windows server through PowerShell.
+
+        The POSIX commands used elsewhere mean nothing to cmd or PowerShell,
+        and Windows keeps keys in other places: see _WINDOWS_INSTALL_SCRIPT.
+
+        Returns:
+            True if the key was added, False if it was already there
+
+        Raises:
+            WindowsServerKeyError: The key could not be installed
+        """
+        script = _WINDOWS_INSTALL_SCRIPT.replace(
+            "__PUBLIC_KEY__", _powershell_literal(public_key_text)
+        )
+        command = _powershell_command(script)
+        if len(command) > _WINDOWS_MAX_COMMAND:
+            raise WindowsServerKeyError(
+                _("error.ssh_windows_key_too_long"), self.public_key_path
+            )
+
+        exit_status, output, error_output = self._exec(ssh, command)
+        reports = _WINDOWS_REPORT.findall(output)
+        status, detail = reports[-1] if reports else ("failed", "")
+        try:
+            detail = base64.b64decode(detail).decode("utf-8", errors="replace")
+        except binascii.Error:
+            detail = ""
+
+        if exit_status == 0 and status == "installed":
+            logger.info(f"Public key installed on the Windows server in {detail}")
+            return True
+        if exit_status == 0 and status == "present":
+            logger.info(f"Public key already present on the Windows server in {detail}")
+            return False
+
+        # No report at all: PowerShell did not get to run the script
+        error = detail or error_output.strip() or output.strip() or exit_status
+        logger.error(f"Installing the public key on the Windows server failed: {error}")
+        raise WindowsServerKeyError(
+            _("error.ssh_windows_install_failed", error=error), self.public_key_path
+        )
+
     def _upload_public_key(
         self, hostname: str, port: int, password: Optional[str]
     ) -> Optional[bool]:
@@ -754,6 +899,8 @@ class SSHManager:
 
         Raises:
             HostKeyChangedError: The server host key changed
+            WindowsServerKeyError: The key could not be installed on a
+                Windows server
             SSHError: The server cannot be reached, or a remote command failed
         """
         public_key_text = self._public_key_to_install()
@@ -775,6 +922,9 @@ class SSHManager:
             return None
 
         try:
+            if _is_windows_server(ssh):
+                return self._install_key_on_windows(ssh, public_key_text)
+
             # Ensure .ssh directory exists
             self._run_remote(ssh, "mkdir -p ~/.ssh && chmod 700 ~/.ssh")
 
@@ -833,6 +983,8 @@ class SSHManager:
 
         Raises:
             HostKeyChangedError: The server host key changed
+            WindowsServerKeyError: The key could not be installed on a
+                Windows server
             SSHError: Wrong password, unreachable server, or a failed
                 remote command
         """
@@ -861,6 +1013,8 @@ class SSHManager:
 
         Raises:
             HostKeyChangedError: The server host key changed
+            WindowsServerKeyError: The key could not be installed on a
+                Windows server
             SSHError: Unreachable server or a failed remote command; a
                 password would not help with either
         """

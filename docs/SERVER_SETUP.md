@@ -85,7 +85,21 @@ cpolar service start
 
 ### 4. SSH 密钥登录
 
-cpolar-connect 目前无法在 Windows 服务器上自动安装公钥（上传使用的是 Linux 命令）。请先手动为 Windows 的 OpenSSH Server 配好密钥登录：管理员账户的公钥放在 `C:\ProgramData\ssh\administrators_authorized_keys`，普通账户放在 `C:\Users\<用户名>\.ssh\authorized_keys`。然后在客户端让该账户直接使用这把密钥：
+服务器上需要运行 Windows 自带的 OpenSSH Server。没有安装的话，用管理员身份打开 PowerShell 执行：
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service -Name sshd -StartupType Automatic
+```
+
+之后和 Linux 服务器一样：首次连接时 cpolar-connect 会自动安装公钥，只需要输入一次 Windows 账户的密码。公钥会放到 OpenSSH 实际读取的位置：
+
+- 管理员账户：`C:\ProgramData\ssh\administrators_authorized_keys`，并按 OpenSSH 的要求把该文件的访问权限限制为管理员和 SYSTEM
+- 其他账户：`C:\Users\<用户名>\.ssh\authorized_keys`
+- 如果你在 `sshd_config` 里注释掉了 `Match Group administrators` 那两行，管理员账户的公钥也会放进自己的 `.ssh\authorized_keys`
+
+安装通过服务器上的 Windows PowerShell 完成，与 OpenSSH 的默认 shell 是 cmd 还是 PowerShell 无关。如果自动安装失败（例如服务器禁止运行 PowerShell），工具会给出公钥文件的位置，把里面那一行手动加到上面对应的文件即可；也可以让该账户直接使用服务器已经接受的密钥：
 
 ```bash
 cpolar-connect config set ssh.key_path ~/.ssh/<你的私钥>

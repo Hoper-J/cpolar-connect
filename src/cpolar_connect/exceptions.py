@@ -69,6 +69,13 @@ class KeyInstallError(SSHError):
         self.public_key_path = public_key_path
 
 
+class WindowsServerKeyError(KeyInstallError):
+    """On a Windows server: PowerShell could not be run there, or the
+    installation failed"""
+
+    pass
+
+
 class PasswordLoginUnavailableError(KeyInstallError):
     """The server does not offer password logins at all, so no password
     can get the key installed"""

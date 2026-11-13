@@ -184,6 +184,9 @@ class Messages:
         "error.ssh_connection_lost": "The connection to {hostname}:{port} was lost during authentication: {error}. Try again",
         "error.ssh_password_login_unavailable": "The server does not accept password logins (it offers: {methods})",
         "hint.password_login_unavailable": "No password can install the key there. Point this account at a key the server already accepts: cpolar-connect -a {account} config set ssh.key_path <private key>. Or add the line in {public_key} to that account's authorized_keys file on the server yourself, then run this again",
+        "error.ssh_windows_install_failed": "Could not install the public key on the Windows server: {error}",
+        "error.ssh_windows_key_too_long": "The public key is too long to be installed on a Windows server automatically",
+        "hint.windows_server_key": "You can still add the key by hand: put the line in {public_key} into C:\\ProgramData\\ssh\\administrators_authorized_keys on the server for an administrator account, into C:\\Users\\<user>\\.ssh\\authorized_keys for any other, then run this again. Or use a key the server already accepts: cpolar-connect -a {account} config set ssh.key_path <private key>",
         "error.password_store_failed": "Failed to store password: {error}",
         # Warnings
         "warning.config_exists": "Configuration already exists. Overwrite?",
@@ -520,6 +523,9 @@ class Messages:
         "error.ssh_connection_lost": "与 {hostname}:{port} 的连接在认证过程中中断：{error}。请重试",
         "error.ssh_password_login_unavailable": "服务器不接受密码登录（它只提供：{methods}）",
         "hint.password_login_unavailable": "在这台服务器上无法用密码安装公钥。请让该账户改用服务器已接受的密钥：cpolar-connect -a {account} config set ssh.key_path <私钥路径>；或者手动把 {public_key} 里的那一行加到服务器上该账户的 authorized_keys 文件，然后重新运行",
+        "error.ssh_windows_install_failed": "在 Windows 服务器上安装公钥失败：{error}",
+        "error.ssh_windows_key_too_long": "公钥太长，无法在 Windows 服务器上自动安装",
+        "hint.windows_server_key": "仍然可以手动添加：把 {public_key} 里的那一行加到服务器上，管理员账户加到 C:\\ProgramData\\ssh\\administrators_authorized_keys，其他账户加到 C:\\Users\\<用户名>\\.ssh\\authorized_keys，然后重新运行。也可以改用服务器已接受的密钥：cpolar-connect -a {account} config set ssh.key_path <私钥路径>",
         "error.password_store_failed": "存储密码失败：{error}",
         # 警告
         "warning.config_exists": "配置已存在，是否覆盖？",

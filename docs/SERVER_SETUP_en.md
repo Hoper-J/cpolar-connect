@@ -81,7 +81,21 @@ cpolar service start
 
 ### 4. SSH Key Login
 
-cpolar-connect cannot install its public key on a Windows server yet (the upload uses Linux commands). Set up key login for Windows OpenSSH Server manually first: keys for administrator accounts go in `C:\ProgramData\ssh\administrators_authorized_keys`, other accounts use `C:\Users\<username>\.ssh\authorized_keys`. Then point the account at that key on the client:
+The server needs Windows' own OpenSSH Server. If it is not installed yet, run this in PowerShell as an administrator:
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service -Name sshd -StartupType Automatic
+```
+
+From there it works as with a Linux server: on the first connection cpolar-connect installs its public key by itself, and you type the Windows account's password once. The key goes where OpenSSH actually reads it:
+
+- Administrator accounts: `C:\ProgramData\ssh\administrators_authorized_keys`, with access to that file restricted to administrators and SYSTEM, as OpenSSH requires
+- Other accounts: `C:\Users\<username>\.ssh\authorized_keys`
+- If you commented out the two `Match Group administrators` lines in `sshd_config`, an administrator's key goes into their own `.ssh\authorized_keys` as well
+
+The installation runs through Windows PowerShell on the server, whether OpenSSH's default shell is cmd or PowerShell. If it fails (for example because the server does not allow PowerShell to run), the tool tells you where the public key file is; add the line in it to the matching file above by hand. Or point the account at a key the server already accepts:
 
 ```bash
 cpolar-connect config set ssh.key_path ~/.ssh/<your-private-key>
