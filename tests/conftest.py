@@ -83,7 +83,8 @@ def write_private_key():
         path.write_bytes(
             key.private_bytes(serialization.Encoding.PEM, key_format, encryption)
         )
-        path.chmod(0o600)
+        # On Windows the mode says nothing; there it takes an access list
+        ssh._restrict_to_user(path)
         return key
 
     return write

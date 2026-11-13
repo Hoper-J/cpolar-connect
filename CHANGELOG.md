@@ -18,6 +18,7 @@
 - 隧道域名无法解析时给出专门的提示（原因在本机网络的 DNS），不再建议检查服务器上的 sshd（#3）/ A tunnel host name that does not resolve gets a message of its own (the cause is the local network's DNS) instead of advice about sshd on the server (#3)
 - 修复 `~/.ssh/config` 不是 UTF-8（例如含 GBK 注释）或无法读写时崩溃的问题 / Fix crashes when `~/.ssh/config` is not UTF-8 (GBK comments, say) or cannot be read or written
 - 公钥上传：公钥始终独占一行（`authorized_keys` 末尾缺少换行时也是如此）；“已安装”按 sshd 的读法判断，不再做子串匹配；登录 shell 是 zsh、dash、csh、tcsh 时同样可用；服务器 60 秒没有回应就放弃 / Public key upload: the key always lands on a line of its own (also when `authorized_keys` lacks a final newline); "already installed" means an entry as sshd reads it, not a substring match; works with zsh, dash, csh and tcsh as the login shell; gives up after 60 seconds without a reply
+- Windows 客户端：生成的私钥和新建的 `~/.ssh/config` 能通过 `ssh.exe` 的权限检查（Python ≥ 3.12.4 下，在没有 `~/.ssh` 的机器上首次运行曾以 Permission denied 告终）；旧版本留下的文件会在下次运行时修复 / Windows client: the generated key and a newly created `~/.ssh/config` pass `ssh.exe`'s access check (with Python ≥ 3.12.4, a first run on a machine without `~/.ssh` ended in "Permission denied"); files left by earlier versions are repaired on the next run
 - 含空格、引号、`#`、`=`、`%` 的 ssh_config 值会被正确转义 / ssh_config values containing spaces, quotes, `#`, `=` or `%` are rendered so that OpenSSH reads them back unchanged
 - `init` 保留它没有问到的设置；消息里出现的命令都带账户名（`-a <账户>`），错误后的提示在静默模式下同样显示 / `init` keeps the settings it does not ask about; every command printed in a message names the account (`-a <name>`), and hints after an error are shown in quiet mode too
 

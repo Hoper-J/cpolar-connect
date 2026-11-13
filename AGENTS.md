@@ -151,7 +151,7 @@ The project follows a modular architecture under `src/cpolar_connect/`:
 ### Security Considerations
 - Password file (`~/.cpolar_connect/accounts/<name>/.password`) uses 600 permissions (owner read/write only)
 - Account names are validated (whitelist regex + reserved names) at every entry point (`-a`, `CPOLAR_ACCOUNT`, `current` file); they feed both filesystem paths and SSH aliases
-- SSH keys should have appropriate permissions (600)
+- SSH keys should have appropriate permissions (600). On a Windows client the equivalent is an access list of the user, SYSTEM and administrators with nothing inherited (`_restrict_to_user` in `ssh.py`), applied to the generated key, and on every run to the key and `~/.ssh/config` (`_keep_acceptable_to_windows_ssh`), which also repairs files left by versions up to 0.3.0. Never create `~/.ssh` with mode `0o700` there (`_make_ssh_dir`): Python ≥ 3.12.4 turns that mode into an inheritable "OWNER RIGHTS" entry, and `ssh.exe` then rejects every key and config file in the directory
 - Validate all user inputs, especially for SSH operations
 - Sanitize configuration values before using in shell commands. Text written on the server goes through `printf '%s\n' '<single-quoted text>'`, never `echo`: the `echo` of zsh, dash and sh expands backslash sequences, and a public key's comment is free text. `~/.ssh/config` is the user's file and need not be UTF-8: it is read and written with `errors="surrogateescape"` so that other bytes pass through unchanged
 

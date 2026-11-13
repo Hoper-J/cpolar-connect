@@ -9,6 +9,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path, PurePosixPath
 
 import paramiko
@@ -454,6 +455,98 @@ class TestDirectCommand:
 
         assert f'\tIdentityFile "{manager.private_key_path}"\n' in content
         assert f'\tUserKnownHostsFile "{manager.known_hosts_path}"\n' in content
+
+    @pytest.mark.skipif(shutil.which("ssh") is None, reason="needs the OpenSSH client")
+    @pytest.mark.parametrize("dirname", ["plain", "John Smith", "o'brien", "张三"])
+    def test_command_line_means_to_ssh_what_was_meant(
+        self, monkeypatch, tmp_path, dirname
+    ):
+        """The options travel as process arguments here, not through a config
+        file: on Windows that adds the quoting rules of its command line."""
+        home = tmp_path / dirname
+        home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: home)
+        manager = SSHManager(_make_config(home), known_hosts_path=home / "known_hosts")
+        no_config = home / "empty_config"  # keep the real ~/.ssh/config out
+        no_config.write_text("")
+
+        result = subprocess.run(
+            ["ssh", "-G", "-F", str(no_config), *manager.build_ssh_command(TUNNEL)[1:]],
+            capture_output=True,
+            encoding="utf-8",
+        )
+
+        assert result.returncode == 0, result.stderr
+        options = dict(
+            line.split(" ", 1) for line in result.stdout.splitlines() if " " in line
+        )
+        assert options["identityfile"] == str(manager.private_key_path)
+        assert options["userknownhostsfile"] == str(manager.known_hosts_path)
+        assert options["hostkeyalias"] == ALIAS
+        assert (options["user"], options["hostname"], options["port"]) == (
+            "ubuntu",
+            "1.tcp.cpolar.top",
+            "12345",
+        )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows access lists")
+class TestFileAccessOnWindows:
+    """ssh.exe refuses a ~/.ssh/config, and ignores a private key, that others
+    have access to. What a directory made with mode 0o700 hands down to its
+    files counts as others (pytest's temp directory is such a directory)."""
+
+    @staticmethod
+    def _access_list(path):
+        listing = subprocess.run(["icacls", str(path)], capture_output=True, text=True)
+        assert listing.returncode == 0, listing.stderr
+        return listing.stdout
+
+    def test_config_file_is_left_to_three_accounts(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"  # no .ssh yet: the tool creates everything
+        monkeypatch.setattr(Path, "home", lambda: home)
+        manager = SSHManager(_make_config(home), known_hosts_path=home / "known_hosts")
+
+        manager.update_ssh_config(TUNNEL)
+
+        listing = self._access_list(manager.ssh_config_path)
+        entries = [line for line in listing.splitlines() if ":(" in line]
+        # The user, SYSTEM and administrators; icacls marks inherited ones (I)
+        assert len(entries) == 3, listing
+        assert "(I)" not in listing
+
+    @pytest.mark.skipif(shutil.which("ssh-keygen") is None, reason="needs ssh-keygen")
+    def test_files_left_by_an_earlier_version_are_repaired(self, monkeypatch, tmp_path):
+        """Up to 0.3.0 the tool made ~/.ssh with mode 0o700. On Python 3.12.4
+        and later, the key and the config file created in it are unusable to
+        ssh.exe; upgrading must be enough to get them working."""
+        home = tmp_path / "home"
+        monkeypatch.setattr(Path, "home", lambda: home)
+        ssh_dir = home / ".ssh"
+        ssh_dir.mkdir(parents=True, mode=0o700)
+        config = CpolarConfig(
+            username="user@example.com",
+            server_user="ubuntu",
+            ssh_key_path=str(ssh_dir / "id_rsa_cpolar"),
+        )
+        manager = SSHManager(config, known_hosts_path=home / "known_hosts")
+        paramiko.ECDSAKey.generate().write_private_key_file(
+            str(manager.private_key_path)
+        )
+        manager.ssh_config_path.write_text("# SSH config file\n")
+        read_key = ["ssh-keygen", "-y", "-P", "", "-f", str(manager.private_key_path)]
+        if sys.version_info >= (3, 12, 4):
+            # What such a user is looking at before the upgrade
+            assert subprocess.run(read_key, capture_output=True).returncode != 0
+            assert "OWNER RIGHTS" in self._access_list(manager.ssh_config_path)
+
+        manager.update_ssh_config(TUNNEL)
+
+        accepted = subprocess.run(read_key, capture_output=True, text=True)
+        assert accepted.returncode == 0, accepted.stderr
+        listing = self._access_list(manager.ssh_config_path)
+        assert "OWNER RIGHTS" not in listing
+        assert "(I)" not in listing
 
 
 class TestServerUserSafety:

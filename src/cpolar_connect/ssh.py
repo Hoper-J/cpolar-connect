@@ -239,6 +239,65 @@ def _is_authorized(public_key_line: str, authorized_keys: str) -> bool:
     )
 
 
+def _make_ssh_dir(path: Path) -> None:
+    """Create a directory for SSH files that only the user can access.
+
+    On Windows a new directory inherits just that from the user profile.
+    Asking for mode 0o700 there makes things worse: Python (3.12.4 and
+    later) then grants access through an "OWNER RIGHTS" entry, which is
+    handed down to every file created in the directory and which ssh.exe
+    counts as somebody else, so it refuses the private keys and the config
+    file in it.
+    """
+    if platform.system() == "Windows":
+        path.mkdir(parents=True, exist_ok=True)
+    else:
+        path.mkdir(parents=True, mode=0o700, exist_ok=True)
+
+
+def _restrict_to_user(*paths: Path) -> None:
+    """Leave files that ssh checks the access rights of to the user alone.
+
+    POSIX: mode 600. Windows: an access list of the user, SYSTEM and the
+    administrators, with nothing inherited from the directory. That is what
+    ssh.exe accepts for a private key and for ~/.ssh/config, and what
+    ssh-keygen gives the keys it writes.
+
+    The "OWNER RIGHTS" entry is removed by name as well: a file created in
+    a directory that Python made with mode 0o700 carries it as an entry of
+    its own, which dropping the inherited entries does not touch.
+    """
+    if platform.system() != "Windows":
+        for path in paths:
+            os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+        return
+
+    whoami = subprocess.run(
+        ["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, check=True
+    )
+    # "machine\name","S-1-5-21-..."; only the SID is needed, and it is ASCII
+    sid = whoami.stdout.decode("ascii", errors="replace").strip()
+    sid = sid.rsplit(",", 1)[-1].strip('"')
+    if not re.fullmatch(r"S-1-[0-9-]+", sid):
+        raise ValueError(f"cannot tell the current user's SID from whoami: {sid!r}")
+    for path in paths:
+        subprocess.run(
+            [
+                "icacls",
+                str(path),
+                "/inheritance:r",
+                "/grant:r",
+                f"*{sid}:F",
+                "*S-1-5-18:F",  # SYSTEM
+                "*S-1-5-32-544:F",  # administrators
+                "/remove",
+                "*S-1-3-4",  # OWNER RIGHTS
+            ],
+            capture_output=True,
+            check=True,
+        )
+
+
 def _is_windows_server(ssh: paramiko.SSHClient) -> bool:
     """Whether the server introduced itself as OpenSSH for Windows."""
     transport = ssh.get_transport()
@@ -528,7 +587,7 @@ class SSHManager:
         """Ensure .ssh directory exists with correct permissions"""
         if not self.ssh_dir.exists():
             try:
-                self.ssh_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+                _make_ssh_dir(self.ssh_dir)
                 logger.info(f"Created SSH directory: {self.ssh_dir}")
             except Exception as e:
                 logger.error(f"Failed to create SSH directory: {e}")
@@ -563,9 +622,9 @@ class SSHManager:
             # Save private key
             key.write_private_key_file(str(self.private_key_path))
 
-            # Set correct permissions (600)
+            # ssh ignores a private key that others can access
             try:
-                os.chmod(self.private_key_path, stat.S_IRUSR | stat.S_IWUSR)
+                _restrict_to_user(self.private_key_path)
             except Exception as e:
                 logger.warning(f"Failed to set private key permissions: {e}")
 
@@ -748,7 +807,8 @@ class SSHManager:
         ssh ignores a private key of the user's own that group or others can
         access. paramiko does not look, so the check would pass with a key
         that `ssh` then does not use. A key owned by someone else (shared
-        through a group) is not judged, by ssh or here.
+        through a group) is not judged, by ssh or here. On Windows the
+        access rights are put right instead: _keep_acceptable_to_windows_ssh.
 
         Raises:
             SSHError: The key file is too widely accessible
@@ -1051,7 +1111,7 @@ class SSHManager:
             SSHError: The config file cannot be read or written
         """
         if not self.ssh_config_path.parent.exists():
-            self.ssh_config_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            _make_ssh_dir(self.ssh_config_path.parent)
 
         # Create config file if not exists
         if not self.ssh_config_path.exists():
@@ -1095,6 +1155,28 @@ class SSHManager:
             f.writelines(lines)
 
         logger.info(f"Updated SSH config: {self.ssh_config_path}")
+        self._keep_acceptable_to_windows_ssh()
+
+    def _keep_acceptable_to_windows_ssh(self) -> None:
+        """Windows: give the key and ~/.ssh/config access rights ssh.exe accepts.
+
+        ssh.exe ignores a private key, and stops at a config file, that
+        anyone but the user can access. A config file created just now needs
+        its inherited entries removed. Both files need repair if they date
+        from a version up to 0.3.0, which created ~/.ssh in a way that left
+        every file in it with an entry ssh.exe rejects (see _make_ssh_dir).
+        """
+        if platform.system() != "Windows":
+            return
+        paths = [
+            path
+            for path in (self.private_key_path, self.ssh_config_path)
+            if path.is_file()
+        ]
+        try:
+            _restrict_to_user(*paths)
+        except Exception as e:
+            logger.warning(f"Failed to set access rights of {paths}: {e}")
 
     def _find_host_block(self, lines: List[str]) -> Tuple[int, int]:
         """Locate this alias's Host block; returns (start, end) or (-1, -1)."""

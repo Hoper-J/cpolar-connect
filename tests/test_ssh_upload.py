@@ -11,6 +11,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -924,6 +925,103 @@ class TestExistingKeyTypes:
         key = paramiko.RSAKey.from_private_key_file(str(manager.private_key_path))
         public = manager.public_key_path.read_text(encoding="utf-8").split()
         assert public == ["ssh-rsa", key.get_base64(), "cpolar-connect"]
+
+
+class TestPrivateKeyAccess:
+    """ssh ignores a private key that anyone but its owner can access."""
+
+    @pytest.fixture
+    def fresh(self, tmp_path):
+        """A manager whose key directory does not exist yet."""
+        config = CpolarConfig(
+            username="user@example.com",
+            server_user="ubuntu",
+            ssh_key_path=str(tmp_path / "fresh" / ".ssh" / "id_rsa_cpolar"),
+        )
+        return SSHManager(config)
+
+    @pytest.mark.skipif(shutil.which("ssh-keygen") is None, reason="needs ssh-keygen")
+    def test_generated_key_is_accepted_by_openssh(self, fresh):
+        """ssh-keygen applies the access check ssh does. On Windows it is
+        about the access list: recent Python versions give a directory made
+        with mode 0o700 (pytest's temp directory here, ~/.ssh in the tool
+        before) an entry that its files inherit and that OpenSSH rejects."""
+        assert fresh.generate_ssh_key() is True
+
+        result = subprocess.run(
+            ["ssh-keygen", "-y", "-f", str(fresh.private_key_path)],
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0 and sys.platform == "win32":
+            listing = subprocess.run(
+                ["icacls", str(fresh.private_key_path)], capture_output=True, text=True
+            )
+            pytest.fail(f"{result.stderr}\naccess list:\n{listing.stdout}")
+        assert result.returncode == 0, result.stderr
+        public = fresh.public_key_path.read_text(encoding="utf-8").split()
+        assert result.stdout.split()[:2] == public[:2]
+
+    def test_windows_key_is_left_to_the_user_system_and_administrators(
+        self, monkeypatch, fresh
+    ):
+        commands = []
+
+        def fake_run(command, **kwargs):
+            commands.append(command)
+            output = (
+                b'"pc\\me","S-1-5-21-1-2-3-1001"\r\n' if "whoami" in command else b""
+            )
+            return subprocess.CompletedProcess(command, 0, output, b"")
+
+        monkeypatch.setattr(ssh_module.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(ssh_module.subprocess, "run", fake_run)
+
+        assert fresh.generate_ssh_key() is True
+
+        assert commands[-1] == [
+            "icacls",
+            str(fresh.private_key_path),
+            "/inheritance:r",
+            "/grant:r",
+            "*S-1-5-21-1-2-3-1001:F",
+            "*S-1-5-18:F",
+            "*S-1-5-32-544:F",
+            "/remove",
+            "*S-1-3-4",
+        ]
+
+    def test_windows_ssh_directory_is_not_created_with_mode_700(
+        self, monkeypatch, fresh
+    ):
+        """That mode is what makes Python add the entry OpenSSH rejects."""
+        modes = []
+        real_mkdir = Path.mkdir
+
+        def recording_mkdir(self, mode=0o777, parents=False, exist_ok=False):
+            modes.append(mode)
+            return real_mkdir(self, mode=mode, parents=parents, exist_ok=exist_ok)
+
+        monkeypatch.setattr(ssh_module.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(Path, "mkdir", recording_mkdir)
+
+        fresh.ensure_ssh_directory()
+
+        assert fresh.ssh_dir.is_dir()
+        assert 0o700 not in modes
+
+    def test_failing_to_set_the_access_list_does_not_lose_the_key(
+        self, monkeypatch, fresh
+    ):
+        def failing_run(command, **kwargs):
+            raise OSError("no such program")
+
+        monkeypatch.setattr(ssh_module.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(ssh_module.subprocess, "run", failing_run)
+
+        assert fresh.generate_ssh_key() is True
+        assert fresh.public_key_path.exists()
 
 
 def make_shell_backed_client_class(shell, server_home):
