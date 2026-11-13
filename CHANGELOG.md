@@ -25,6 +25,7 @@
 ### 🔧 改进 / Improvements
 - ⚠️ 依赖变化：需要 `paramiko>=3.2`，并显式依赖 `cryptography` / Dependency change: `paramiko>=3.2` is required, and `cryptography` is a declared dependency
 - ⚠️ 输出契约变化：`status -f json` 的 `tunnel` 新增 `name` 与 `other_candidates`；直连命令改用 `-o IdentityFile=` 传递密钥 / Contract change: `tunnel` in `status -f json` gains `name` and `other_candidates`; the direct ssh command passes the key as `-o IdentityFile=`
+- 新增 GitHub Actions CI：在 Linux、macOS、Windows 上运行测试，并对真实的 sshd（Linux 与 Windows）运行端到端测试 / GitHub Actions CI: the tests run on Linux, macOS and Windows, and end-to-end tests run against real sshd on Linux and Windows
 
 ## [0.3.0] - 2026-07-10
 

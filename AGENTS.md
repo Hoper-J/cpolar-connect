@@ -53,7 +53,9 @@ uv run pytest tests/ -v
 | `├─ test_prompts.py` | Prompt cancellation semantics |
 | `├─ test_i18n_keys.py` | i18n guards: keys, placeholders, commands that name the account |
 | `├─ test_verify_credentials.py` | Init-time credential verification |
-| `└─ test_status_local_only.py` | Status command tests |
+| `├─ test_status_local_only.py` | Status command tests |
+| `└─ e2e/test_real_sshd.py` | Connect flow against a real sshd (opt-in via `CPOLAR_E2E_*`, run by CI) |
+| `.github/workflows/ci.yml` | CI: format check, tests on Linux/macOS/Windows (Python 3.8 & 3.13), end-to-end tests against Linux and Windows sshd |
 | `docs/` | Documentation directory |
 
 ## Development Commands
@@ -160,6 +162,8 @@ The project follows a modular architecture under `src/cpolar_connect/`:
 - Use `pytest` with fixtures for isolation
 - Every test is isolated by the autouse fixture in `conftest.py`: home (`Path.home` and `HOME`) points at `tmp_path`, `CPOLAR_ACCOUNT`/`CPOLAR_PASSWORD`/`SSH_AUTH_SOCK` are unset, the `ssh -G` question about agent keys is answered without asking (it would read the real `~/.ssh/config`), and the i18n singleton is reset and pinned to English — a developer's real env vars/homedir/locale must never leak into tests. Do not undo it; a test that needs another language or account sets it explicitly
 - Do NOT monkeypatch `os.name` to simulate Windows (it breaks pathlib's platform dispatch); patch `platform.system` instead
+- The suite also runs on Windows in CI. Mark a test that needs POSIX permission bits or a POSIX shell with `@pytest.mark.posix_only` (skipped on Windows); everything else must pass there
+- `tests/e2e/` drives the connect flow against a real sshd, with only cpolar login and tunnel discovery replaced. It is skipped unless `CPOLAR_E2E_SSH_KEY` is set (variables are listed in the module docstring) and it writes to the target account's `authorized_keys`: CI points it at throwaway Linux and Windows machines, never point it at a server that matters
 - Mock external services (cpolar API, SSH connections). Where the SSH handshake itself is the subject (which host key a server presents), the `ssh_server` fixture in `conftest.py` starts a real paramiko server on the loopback interface instead
 - Test both success and failure paths
 - Run tests: `uv run pytest tests/ -v`

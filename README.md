@@ -346,7 +346,7 @@ pip uninstall cpolar-connect
 ### 支持哪些系统？
 - ✅ Linux (Ubuntu, CentOS, Debian...)
 - ✅ macOS
-- ❓  Windows
+- ✅ Windows（本机和服务器都可以；作为服务器时需要启用系统自带的 OpenSSH Server，见[服务器配置指南](docs/SERVER_SETUP.md)）
 
 ## 🤝 贡献
 

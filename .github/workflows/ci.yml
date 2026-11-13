@@ -1,0 +1,222 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The uv release uv.lock was written with. The interpreter always comes
+  # from setup-python, never from a download
+  UV_VERSION: "0.8.0"
+  UV_PYTHON_DOWNLOADS: never
+
+jobs:
+  lint:
+    name: format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --disable-pip-version-check uv==${{ env.UV_VERSION }}
+      - run: uv sync --extra dev --frozen --python 3.13
+      - run: uv run --no-sync black --check src/ tests/ --line-length=88
+      - run: uv run --no-sync isort --check-only src/ tests/ --profile=black
+
+  test:
+    name: tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 3.8 is the oldest supported version. setup-python has no build of
+          # it for images newer than Ubuntu 24.04, hence the fixed image
+          - { os: ubuntu-24.04, python: "3.8" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: macos-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.8" }
+          - { os: windows-latest, python: "3.13" }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Put Windows' own OpenSSH client first on PATH
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value "$env:SystemRoot\System32\OpenSSH"
+      - run: python -m pip install --disable-pip-version-check uv==${{ env.UV_VERSION }}
+      - run: uv sync --extra dev --frozen --python ${{ matrix.python }}
+      - run: uv run --no-sync pytest tests/ -v
+
+  e2e-linux:
+    name: end to end (Linux sshd)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --disable-pip-version-check uv==${{ env.UV_VERSION }}
+      - run: uv sync --extra dev --frozen --python 3.13
+      - name: Start sshd with a key for this account
+        run: |
+          [ -x /usr/sbin/sshd ] || { sudo apt-get update -qq; sudo apt-get install -y -qq openssh-server; }
+          sudo ssh-keygen -A
+          ssh-keygen -q -t ed25519 -N '' -C e2e -f "$RUNNER_TEMP/e2e_key"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          cat "$RUNNER_TEMP/e2e_key.pub" >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          chmod go-w ~
+          # Two more accounts without any key: one that logs in with a
+          # password, one whose password is empty
+          password="$(openssl rand -hex 16)"
+          echo "::add-mask::$password"
+          echo "$password" > "$RUNNER_TEMP/e2e_password"
+          sudo useradd --create-home --shell /bin/bash e2e-password
+          echo "e2e-password:$password" | sudo chpasswd
+          sudo useradd --create-home --shell /bin/bash e2e-nopassword
+          sudo passwd --delete e2e-nopassword
+          printf '%s\n' 'PasswordAuthentication yes' 'PermitEmptyPasswords yes' |
+            sudo tee /etc/ssh/sshd_config.d/00-e2e.conf > /dev/null
+          sudo systemctl restart ssh || sudo service ssh restart
+          sudo sshd -T | grep -E '^(passwordauthentication|permitemptypasswords|usepam) '
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i "$RUNNER_TEMP/e2e_key" "$(id -un)@127.0.0.1" 'echo "sshd is up: $(ssh -V 2>&1)"'
+      - name: End-to-end tests
+        run: |
+          user="$(id -un)"
+          password="$(cat "$RUNNER_TEMP/e2e_password")"
+          export CPOLAR_E2E_SSH_KEY="$RUNNER_TEMP/e2e_key"
+          export CPOLAR_E2E_SSH_USER="$user"
+          export CPOLAR_E2E_AUTHORIZED_KEYS="$HOME/.ssh/authorized_keys"
+          export CPOLAR_E2E_PASSWORD_USER=e2e-password
+          export CPOLAR_E2E_PASSWORD="$password"
+          export CPOLAR_E2E_NO_PASSWORD_USER=e2e-nopassword
+          uv run --no-sync pytest tests/e2e -v -rA --no-cov
+      - name: sshd log
+        if: failure()
+        run: sudo journalctl -u ssh -n 80 --no-pager || true
+
+  e2e-windows:
+    name: end to end (Windows sshd, ${{ matrix.shell }} shell, ${{ matrix.admin_keys }} admin keys)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # shell: what the server runs remote commands with. cmd is the
+        # default of OpenSSH for Windows, Windows PowerShell a common choice.
+        # admin_keys: where administrators' keys live. One shared file by
+        # default; many setups switch that off, which puts them in each
+        # administrator's own profile
+        include:
+          - { shell: cmd, admin_keys: shared }
+          - { shell: powershell, admin_keys: shared }
+          - { shell: cmd, admin_keys: per-user }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Put Windows' own OpenSSH client first on PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value "$env:SystemRoot\System32\OpenSSH"
+      - run: python -m pip install --disable-pip-version-check uv==${{ env.UV_VERSION }}
+      - run: uv sync --extra dev --frozen --python 3.13
+      - name: Generate a key
+        shell: cmd
+        run: ssh-keygen -q -t ed25519 -N "" -C e2e -f "%USERPROFILE%\e2e_key"
+      - name: Start sshd with that key for this account
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Get-Service sshd -ErrorAction SilentlyContinue)) {
+            Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+          }
+          if ("${{ matrix.shell }}" -eq "powershell") {
+            if (-not (Test-Path "HKLM:\SOFTWARE\OpenSSH")) {
+              New-Item -Path "HKLM:\SOFTWARE\OpenSSH" | Out-Null
+            }
+            New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -PropertyType String -Force `
+              -Value "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" | Out-Null
+          }
+          Set-Service -Name sshd -StartupType Manual
+          Start-Service sshd  # the first start writes sshd_config and the host keys
+          $publicKey = Get-Content "$env:USERPROFILE\e2e_key.pub"
+          if ("${{ matrix.admin_keys }}" -eq "shared") {
+            # This account is an administrator: its keys live here, not in ~/.ssh
+            $authorized = "$env:ProgramData\ssh\administrators_authorized_keys"
+            Add-Content -Path $authorized -Value $publicKey -Encoding ascii
+            icacls.exe $authorized /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F" | Out-Null
+          } else {
+            $config = "$env:ProgramData\ssh\sshd_config"
+            $shared = '^(Match Group administrators\s*|\s+AuthorizedKeysFile\s+__PROGRAMDATA__.*)$'
+            (Get-Content $config) -replace $shared, '#$1' | Set-Content $config
+            Restart-Service sshd
+            $authorized = "$env:USERPROFILE\.ssh\authorized_keys"
+            New-Item -ItemType Directory -Force -Path (Split-Path $authorized) | Out-Null
+            Add-Content -Path $authorized -Value $publicKey -Encoding ascii
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "CPOLAR_E2E_AUTHORIZED_KEYS=$authorized"
+          # A standard account that logs in with a password and has no key
+          $password = "Cp1!" + [guid]::NewGuid().ToString("N").Substring(0, 10)
+          Write-Output "::add-mask::$password"
+          Set-Content -Path "$env:RUNNER_TEMP\e2e_password" -Value $password
+          net.exe user e2e-password $password /add | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "cannot create the password account" }
+          net.exe localgroup "OpenSSH Users" 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { net.exe localgroup "OpenSSH Users" e2e-password /add | Out-Null }
+          # ...and an administrator in the same position
+          net.exe user e2e-admin $password /add | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "cannot create the administrator account" }
+          net.exe localgroup Administrators e2e-admin /add | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "cannot make e2e-admin an administrator" }
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL `
+            -i "$env:USERPROFILE\e2e_key" "$env:USERNAME@127.0.0.1" "echo sshd is up"
+          if ($LASTEXITCODE -ne 0) { throw "cannot log in to the local sshd" }
+          ssh -V
+      - name: End-to-end tests
+        shell: pwsh
+        run: |
+          $env:CPOLAR_E2E_SSH_KEY = "$env:USERPROFILE\e2e_key"
+          $env:CPOLAR_E2E_SSH_USER = $env:USERNAME
+          $env:CPOLAR_E2E_PASSWORD_USER = "e2e-password"
+          $env:CPOLAR_E2E_ADMIN_PASSWORD_USER = "e2e-admin"
+          $env:CPOLAR_E2E_PASSWORD = Get-Content "$env:RUNNER_TEMP\e2e_password"
+          uv run --no-sync pytest tests/e2e -v -rA --no-cov
+      - name: Where the keys ended up
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($file in "$env:ProgramData\ssh\administrators_authorized_keys",
+                            "$env:USERPROFILE\.ssh\authorized_keys",
+                            "C:\Users\e2e-password\.ssh\authorized_keys",
+                            "C:\Users\e2e-admin\.ssh\authorized_keys") {
+            if (Test-Path $file) {
+              "--- ${file}: $(@(Get-Content $file).Count) line(s)"
+              icacls.exe $file
+            } else {
+              "--- ${file}: absent"
+            }
+          }
+      - name: sshd configuration and log
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-Content "$env:ProgramData\ssh\sshd_config" | Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*#' }
+          Get-WinEvent -LogName "OpenSSH/Operational" -MaxEvents 60 -ErrorAction SilentlyContinue |
+            Sort-Object TimeCreated | ForEach-Object { "$($_.TimeCreated.ToString('HH:mm:ss')) $($_.Message)" }
