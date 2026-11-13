@@ -8,7 +8,7 @@ from typing import Optional
 import requests
 from bs4 import BeautifulSoup
 
-from .config import DEFAULT_BASE_URL, ConfigManager
+from .config import DEFAULT_BASE_URL, ConfigManager, resolve_account
 from .exceptions import AuthenticationError, NetworkError
 from .i18n import _
 
@@ -48,6 +48,12 @@ class CpolarAuth:
         self.login_url = f"{self.base_url}/login"
         self.status_url = f"{self.base_url}/status"
         self.authenticated = False
+
+    def _account(self) -> str:
+        """The account whose credentials these are, for hints that name it."""
+        if self.config_manager is not None:
+            return self.config_manager.account
+        return resolve_account(None)
 
     def get_csrf_token(self) -> str:
         """Get CSRF token from login page"""
@@ -98,14 +104,18 @@ class CpolarAuth:
         # Get credentials
         if not username:
             if self.config is None:
-                raise AuthenticationError(_("auth.password_required"))
+                raise AuthenticationError(
+                    _("auth.password_required", account=self._account())
+                )
             username = self.config.username
 
         if not password:
             if self.config_manager is not None:
                 password = self.config_manager.get_password(username)
             if not password:
-                raise AuthenticationError(_("auth.password_required"))
+                raise AuthenticationError(
+                    _("auth.password_required", account=self._account())
+                )
 
         try:
             # Step 1: Get CSRF token

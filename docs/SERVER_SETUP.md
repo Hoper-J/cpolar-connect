@@ -83,6 +83,14 @@ cpolar service install
 cpolar service start
 ```
 
+### 4. SSH 密钥登录
+
+cpolar-connect 目前无法在 Windows 服务器上自动安装公钥（上传使用的是 Linux 命令）。请先手动为 Windows 的 OpenSSH Server 配好密钥登录：管理员账户的公钥放在 `C:\ProgramData\ssh\administrators_authorized_keys`，普通账户放在 `C:\Users\<用户名>\.ssh\authorized_keys`。然后在客户端让该账户直接使用这把密钥：
+
+```bash
+cpolar-connect config set ssh.key_path ~/.ssh/<你的私钥>
+```
+
 ## 🍎 macOS 服务器配置
 
 ### 1. 安装 cpolar

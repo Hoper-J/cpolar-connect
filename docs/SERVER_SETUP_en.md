@@ -79,6 +79,14 @@ cpolar service install
 cpolar service start
 ```
 
+### 4. SSH Key Login
+
+cpolar-connect cannot install its public key on a Windows server yet (the upload uses Linux commands). Set up key login for Windows OpenSSH Server manually first: keys for administrator accounts go in `C:\ProgramData\ssh\administrators_authorized_keys`, other accounts use `C:\Users\<username>\.ssh\authorized_keys`. Then point the account at that key on the client:
+
+```bash
+cpolar-connect config set ssh.key_path ~/.ssh/<your-private-key>
+```
+
 ## 🍎 macOS Server Configuration
 
 ### 1. Install cpolar

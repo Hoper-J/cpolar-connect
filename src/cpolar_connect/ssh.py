@@ -2,21 +2,238 @@
 SSH management module for Cpolar Connect
 """
 
+import functools
+import io
 import logging
 import os
+import platform
+import re
+import shlex
+import socket
 import stat
 import subprocess
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 import paramiko
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from paramiko.hostkeys import HostKeyEntry
 
 from .config import ACCOUNTS_DIR_NAME, CpolarConfig, resolve_account
-from .exceptions import HostKeyChangedError, SSHError
+from .exceptions import (
+    HostKeyChangedError,
+    PasswordLoginUnavailableError,
+    ServerUnreachableError,
+    SSHError,
+)
 from .i18n import _
 from .tunnel import TunnelInfo
 
 logger = logging.getLogger(__name__)
+
+# What OpenSSH's config tokenizer treats specially: whitespace and "=" end an
+# argument, quotes group, "#" can start a comment, and a backslash escapes a
+# following quote or backslash
+_CONFIG_SPECIAL = re.compile(r'[\s"\'#=]|\\(?=[\\"\'])')
+
+
+def _config_token(value: str) -> str:
+    """Render a value as one ssh_config argument (also valid for `ssh -o`).
+
+    A value with none of the tokenizer's special characters is written as it
+    is, byte for byte what earlier versions wrote; that covers ordinary
+    paths on every platform, including Windows paths (a lone backslash is
+    literal to OpenSSH) and non-ASCII names. Only a value that used to break
+    the config is double-quoted, with quotes and the backslashes that would
+    act as escapes escaped.
+    """
+    if value and not _CONFIG_SPECIAL.search(value):
+        return value
+    escaped = re.sub(r'\\(?=[\\"\']|$)|"', lambda m: "\\" + m.group(0), value)
+    return f'"{escaped}"'
+
+
+def _config_path(path: Path) -> str:
+    """Render a path for IdentityFile/UserKnownHostsFile.
+
+    Both directives expand %-tokens, so a literal percent sign is doubled.
+    """
+    return _config_token(str(path).replace("%", "%%"))
+
+
+# How ~/.ssh/config is read and written back. It is the user's file and need
+# not be UTF-8 (a comment saved by an older Windows editor is GBK or the
+# like): such bytes pass through unchanged instead of stopping the run
+_USER_FILE = {"encoding": "utf-8", "errors": "surrogateescape"}
+
+# How long a remote command may stay silent. Each of them finishes at once,
+# so a longer silence means that the connection has died without a word
+_REMOTE_COMMAND_TIMEOUT = 60
+
+
+def _reason(error: Exception) -> str:
+    """What an exception says, for use inside a message; some say nothing."""
+    text = str(error).strip()
+    if text:
+        return text
+    if isinstance(error, EOFError):
+        return _("error.reason_connection_closed")
+    return type(error).__name__
+
+
+def _reports_config_file_errors(method):
+    """Turn an OSError about ~/.ssh/config into an SSHError that names the file.
+
+    It is the user's file and may be anything: read-only, a directory,
+    someone else's. That has to end as a message, not as a traceback.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except OSError as e:
+            logger.error(f"Cannot read or update {self.ssh_config_path}: {e}")
+            raise SSHError(
+                _(
+                    "error.ssh_config_unusable",
+                    path=self.ssh_config_path,
+                    # The system's wording alone: str(e) repeats the path
+                    error=e.strerror or _reason(e),
+                )
+            )
+
+    return wrapper
+
+
+# Key types accepted for ssh_key_path; generated keys are always RSA
+_KEY_CLASSES = (paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey)
+
+
+def _load_pkcs8_key(path: Path) -> Optional[paramiko.PKey]:
+    """Load a private key in PKCS#8 PEM form ("BEGIN PRIVATE KEY").
+
+    openssl writes keys in this form. `ssh` takes an RSA or ECDSA key in it
+    as IdentityFile, but paramiko cannot read it: the key is handed to
+    paramiko in the OpenSSH form instead. An Ed25519 key in this form is
+    refused, because most builds of ssh cannot read it either (it takes a
+    recent OpenSSH built against a libcrypto that knows Ed25519).
+
+    Returns:
+        The key, or None if the file holds no such key of a supported type
+
+    Raises:
+        SSHError: The key is passphrase-protected, or an Ed25519 key
+    """
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if b"-----BEGIN ENCRYPTED PRIVATE KEY-----" in data:
+        raise SSHError(_("error.ssh_key_passphrase", path=path))
+    if b"-----BEGIN PRIVATE KEY-----" not in data:
+        return None
+    try:
+        key = serialization.load_pem_private_key(data, password=None)
+        if isinstance(key, ed25519.Ed25519PrivateKey):
+            raise SSHError(_("error.ssh_key_pkcs8_ed25519", path=path))
+        openssh_form = key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.OpenSSH,
+            serialization.NoEncryption(),
+        ).decode("ascii")
+    except (ValueError, TypeError, UnsupportedAlgorithm) as e:
+        logger.debug(f"{path} is not a usable PKCS#8 key: {e}")
+        return None
+    for key_class in _KEY_CLASSES:
+        try:
+            return key_class.from_private_key(io.StringIO(openssh_form))
+        except Exception as e:
+            # As in load_private_key: a key of another type
+            logger.debug(f"{path} (PKCS#8) is not a {key_class.__name__}: {e}")
+    return None
+
+
+def load_private_key(path: Path) -> paramiko.PKey:
+    """Load an unencrypted RSA, Ed25519 or ECDSA private key.
+
+    Raises:
+        FileNotFoundError: No key at this path
+        SSHError: The file is unreadable, passphrase-protected, or not a
+            supported private key
+    """
+    for key_class in _KEY_CLASSES:
+        try:
+            return key_class.from_private_key_file(str(path))
+        except FileNotFoundError:
+            raise
+        except paramiko.PasswordRequiredException:
+            raise SSHError(_("error.ssh_key_passphrase", path=path))
+        except OSError as e:
+            raise SSHError(_("error.ssh_key_load_failed", path=path, error=e))
+        except Exception as e:
+            # A key of another type (or a file that is no key at all) shows
+            # up as SSHException, ValueError, UnicodeDecodeError...; that is
+            # only an error once every supported type has been tried
+            logger.debug(f"{path} is not a {key_class.__name__}: {e}")
+    key = _load_pkcs8_key(path)
+    if key is None:
+        raise SSHError(_("error.ssh_key_unsupported", path=path))
+    return key
+
+
+def _public_key_line(key: paramiko.PKey) -> str:
+    """The authorized_keys line for a key."""
+    return f"{key.get_name()} {key.get_base64()} cpolar-connect"
+
+
+# How every key type name starts; no authorized_keys option starts like this
+_KEY_TYPE_PREFIX = re.compile(r"(ssh-|ecdsa-|sk-)")
+
+
+def _authorized_key(line: str) -> Tuple[str, str]:
+    """Key type and key data of one authorized_keys line, as sshd reads it.
+
+    The key stands at the start of the line, or after one field of options
+    in which blanks inside double quotes do not separate. Only space and tab
+    are blanks. Whatever follows the key data is comment, even another key.
+    The line is a C string to sshd: it ends at the first NUL byte, as found
+    in a file that was saved as UTF-16.
+    """
+    line = line.split("\x00", 1)[0].strip(" \t\r")
+    if not line or line.startswith("#"):
+        return "", ""
+    if not _KEY_TYPE_PREFIX.match(line):
+        quoted = False
+        end = 0
+        while end < len(line) and (quoted or line[end] not in " \t"):
+            if line[end] == "\\" and line[end + 1 : end + 2] == '"':
+                end += 1  # an escaped quote does not open or close anything
+            elif line[end] == '"':
+                quoted = not quoted
+            end += 1
+        if quoted:
+            return "", ""  # sshd gives up on a line with an unclosed quote
+        line = line[end:].lstrip(" \t")
+    fields = re.split(r"[ \t]+", line)
+    return (fields[0], fields[1]) if len(fields) >= 2 else ("", "")
+
+
+def _is_authorized(public_key_line: str, authorized_keys: str) -> bool:
+    """Whether authorized_keys text has an entry for this public key.
+
+    Only what sshd itself would accept counts. A key that was glued onto
+    the end of another line is part of that line's comment to sshd, with or
+    without a blank in between; if it counted as installed, the upload
+    would be skipped and the entry never repaired.
+    """
+    key_type, key_data = public_key_line.split()[:2]
+    return any(
+        _authorized_key(line) == (key_type, key_data)
+        for line in authorized_keys.split("\n")
+    )
 
 
 class AliasHostKeyPolicy(paramiko.MissingHostKeyPolicy):
@@ -26,37 +243,151 @@ class AliasHostKeyPolicy(paramiko.MissingHostKeyPolicy):
     are recorded and verified under the configured ssh_host_alias instead
     of the (ever-changing) real hostname. The same file is used by the ssh
     CLI via HostKeyAlias + UserKnownHostsFile.
+
+    Once a key is on record, only a key on record is accepted. A key of
+    another type is no exception: whoever sits on the tunnel's path could
+    otherwise get in by presenting just that. A server with a key per type
+    still passes, because it is asked for a type that is on record
+    (`transport`); `ssh` works the same way.
     """
 
     def __init__(self, alias: str, known_hosts_path: Path):
         self.alias = alias
         self.known_hosts_path = known_hosts_path
+        # True once a server key was accepted, i.e. the SSH handshake is done
+        self.accepted = False
+        self._known: Optional[paramiko.HostKeys] = None
+
+    @staticmethod
+    def _algorithms(key_type: str) -> List[str]:
+        """The names under which a server can present a host key of this type."""
+        if key_type == "ssh-rsa":
+            return ["rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"]
+        return [key_type]
+
+    def recorded_keys(self) -> List[paramiko.PKey]:
+        """The keys on record for the alias; none before the first connection.
+
+        Raises:
+            SSHError: The host key file is unusable
+        """
+        known = self._load()
+        try:
+            entry = known.lookup(self.alias)
+        except Exception as e:
+            # Comparing with a hashed name fails if that record is damaged
+            raise self._unusable(e)
+        return list(entry.values()) if entry is not None else []
+
+    def transport(self, sock, **kwargs) -> paramiko.Transport:
+        """Create the transport, asking first for the key types on record.
+
+        Passed to SSHClient.connect as transport_factory. Left to its
+        defaults, the handshake could settle on a key of a type that is not
+        on record although the server has the recorded one as well.
+        """
+        transport = paramiko.Transport(sock, **kwargs)
+        options = transport.get_security_options()
+        on_record = [
+            algorithm
+            for key in self.recorded_keys()
+            for algorithm in self._algorithms(key.get_name())
+            if algorithm in options.key_types
+        ]
+        options.key_types = list(dict.fromkeys(on_record)) + [
+            algorithm for algorithm in options.key_types if algorithm not in on_record
+        ]
+        return transport
 
     def missing_host_key(self, client, hostname, key) -> None:
-        known = paramiko.HostKeys()
-        if self.known_hosts_path.exists():
-            known.load(str(self.known_hosts_path))
+        recorded = self.recorded_keys()
 
-        entry = known.lookup(self.alias)
-        recorded = None
-        if entry is not None and key.get_name() in entry:
-            recorded = entry[key.get_name()]
-
-        if recorded is None:
+        if not recorded:
             # Trust on first use: record under the alias
+            known = self._load()
             known.add(self.alias, key.get_name(), key)
+            self._save(known)
+            logger.info(f"Recorded host key for {self.alias} ({key.get_name()})")
+        elif any(known_key.asbytes() == key.asbytes() for known_key in recorded):
+            logger.debug(f"Host key for {self.alias} verified")
+        else:
+            logger.error(f"Host key mismatch for {self.alias} ({key.get_name()})")
+            raise HostKeyChangedError(_("error.host_key_changed"))
+
+        self.accepted = True
+
+    def _unusable(self, error: Exception) -> SSHError:
+        logger.error(f"Cannot use host key file {self.known_hosts_path}: {error}")
+        return SSHError(
+            _("error.known_hosts_unusable", path=self.known_hosts_path, error=error)
+        )
+
+    def _load(self) -> paramiko.HostKeys:
+        if self._known is not None:
+            return self._known
+        known = paramiko.HostKeys()
+        path = self.known_hosts_path
+        try:
+            if path.exists():
+                # paramiko passes over a record it cannot parse. If that were
+                # the alias's record, the server would be trusted anew as on
+                # a first connection, so every record has to be sound
+                lines = path.read_text(encoding="utf-8").splitlines()
+                for number, line in enumerate(lines, 1):
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if HostKeyEntry.from_line(line, number) is None:
+                        raise ValueError(f"line {number} is not a host key record")
+                known.load(str(path))
+        except Exception as e:
+            # paramiko raises assorted types for an unreadable or corrupt
+            # file. Stopping is deliberate, for the same reason
+            raise self._unusable(e)
+        self._known = known
+        return known
+
+    def _save(self, known: paramiko.HostKeys) -> None:
+        try:
             self.known_hosts_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
             self.known_hosts_path.parent.chmod(0o700)
             known.save(str(self.known_hosts_path))
             self.known_hosts_path.chmod(0o600)
-            logger.info(f"Recorded host key for {self.alias} ({key.get_name()})")
-            return
+        except OSError as e:
+            logger.error(f"Cannot write host key file {self.known_hosts_path}: {e}")
+            raise SSHError(
+                _("error.known_hosts_unusable", path=self.known_hosts_path, error=e)
+            )
 
-        if recorded.asbytes() != key.asbytes():
-            logger.error(f"Host key mismatch for {self.alias}")
-            raise HostKeyChangedError(_("error.host_key_changed"))
 
-        logger.debug(f"Host key for {self.alias} verified")
+def _ssh_offers_agent_keys(user: str, hostname: str, port: int) -> bool:
+    """Whether `ssh` would offer ssh-agent keys on a connection to this host.
+
+    It does unless the user's own ssh configuration says IdentitiesOnly or
+    turns the agent off, typically for all hosts. `ssh -G` evaluates that
+    configuration without connecting. When it cannot be asked, the answer
+    is the default of `ssh`: yes.
+    """
+    try:
+        result = subprocess.run(
+            ["ssh", "-G", "-p", str(port), f"{user}@{hostname}"],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.debug(f"Could not ask ssh for its configuration: {e}")
+        return True
+    if result.returncode != 0:
+        return True
+    options = {}
+    for line in result.stdout.decode("utf-8", errors="replace").splitlines():
+        name, _separator, value = line.partition(" ")
+        options[name.lower()] = value.strip().lower()
+    return (
+        options.get("identitiesonly") != "yes"
+        and options.get("identityagent") != "none"
+    )
 
 
 class SSHManager:
@@ -139,9 +470,8 @@ class SSHManager:
                 logger.warning(f"Failed to set private key permissions: {e}")
 
             # Save public key
-            public_key_text = f"ssh-rsa {key.get_base64()} cpolar-connect"
             with open(self.public_key_path, "w", encoding="utf-8") as f:
-                f.write(public_key_text + "\n")
+                f.write(_public_key_line(key) + "\n")
 
             logger.info(f"Generated new SSH key pair at {self.private_key_path}")
             return True
@@ -153,11 +483,10 @@ class SSHManager:
     def _regenerate_public_key(self) -> None:
         """Regenerate public key from existing private key"""
         try:
-            key = paramiko.RSAKey.from_private_key_file(str(self.private_key_path))
-            public_key_text = f"ssh-rsa {key.get_base64()} cpolar-connect"
+            key = load_private_key(self.private_key_path)
 
             with open(self.public_key_path, "w", encoding="utf-8") as f:
-                f.write(public_key_text + "\n")
+                f.write(_public_key_line(key) + "\n")
 
             logger.info(f"Regenerated public key: {self.public_key_path}")
 
@@ -165,9 +494,108 @@ class SSHManager:
             logger.error(f"Failed to regenerate public key: {e}")
             raise SSHError(_("error.ssh_pubkey_regen_failed", error=e))
 
+    def _open_client(
+        self, hostname: str, port: int, timeout: int, **credentials
+    ) -> Optional[paramiko.SSHClient]:
+        """Connect and authenticate with the given paramiko credentials.
+
+        Failures are classified by phase rather than by exception type: once
+        the host key policy has accepted the server, the SSH handshake is
+        complete, so what goes wrong afterwards concerns the credentials,
+        unless the connection itself broke.
+
+        Returns:
+            The connected client, or None when the server was reached but
+            did not accept the credentials
+
+        Raises:
+            HostKeyChangedError: The server host key changed
+            PasswordLoginUnavailableError: A password was given, but the
+                server does not offer password logins
+            ServerUnreachableError: No SSH session came about: the server's
+                name does not resolve, nothing answers, or the handshake
+                failed. Nothing was learned about the server
+            SSHError: The connection was lost while authenticating, or the
+                local host key file is unusable
+        """
+        policy = self._host_key_policy()
+        policy.recorded_keys()  # an unusable host key file stops the run here
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(policy)
+        try:
+            ssh.connect(
+                hostname=hostname,
+                port=port,
+                username=self.server_user,
+                timeout=timeout,
+                transport_factory=policy.transport,
+                **credentials,
+            )
+            return ssh
+        except SSHError:
+            # Raised by the host key policy; includes HostKeyChangedError
+            ssh.close()
+            raise
+        except Exception as e:
+            # paramiko and its crypto backend raise many unrelated types
+            # here; each one must end as a clear message, not a traceback
+            ssh.close()
+            if (
+                isinstance(e, paramiko.BadAuthenticationType)
+                and credentials.get("password") is not None
+                and not {"password", "keyboard-interactive"} & set(e.allowed_types)
+            ):
+                # Not a wrong password: the server takes none at all
+                logger.error(f"Password login not offered by the server: {e}")
+                raise PasswordLoginUnavailableError(
+                    _(
+                        "error.ssh_password_login_unavailable",
+                        methods=", ".join(e.allowed_types),
+                    ),
+                    self.public_key_path,
+                )
+            if isinstance(e, paramiko.AuthenticationException):
+                logger.warning(f"SSH authentication failed: {e}")
+                return None
+            if policy.accepted and isinstance(e, OSError):
+                # A reset or a timeout says nothing about the credentials
+                logger.error(f"Connection lost while authenticating: {e}")
+                raise SSHError(
+                    _(
+                        "error.ssh_connection_lost",
+                        hostname=hostname,
+                        port=port,
+                        error=_reason(e),
+                    )
+                )
+            if policy.accepted:
+                logger.warning(f"SSH authentication failed: {e}")
+                return None
+            logger.error(f"SSH connection to {hostname}:{port} failed: {e}")
+            if isinstance(e, socket.gaierror):
+                # The name does not resolve here. That is this network's DNS
+                # (some do not resolve tunnel host names), not the server
+                raise ServerUnreachableError(
+                    _("error.ssh_host_unresolved", hostname=hostname, error=_reason(e))
+                )
+            message = (
+                "error.ssh_unreachable"
+                if isinstance(e, (OSError, EOFError))
+                else "error.ssh_handshake_failed"
+            )
+            raise ServerUnreachableError(
+                _(message, hostname=hostname, port=port, error=_reason(e))
+            )
+
     def test_ssh_connection(self, hostname: str, port: int, timeout: int = 10) -> bool:
         """
-        Test SSH connection with key authentication
+        Test key authentication the way the generated ssh config performs it
+
+        Offers the configured key, then any ssh-agent keys: the Host block
+        sets IdentityFile without IdentitiesOnly, so `ssh` uses both, unless
+        the user's own ssh configuration keeps the agent out of it (see
+        _ssh_offers_agent_keys). Default key files (~/.ssh/id_*) are left
+        out, because an explicit IdentityFile makes `ssh` skip them too.
 
         Args:
             hostname: Remote hostname
@@ -175,111 +603,219 @@ class SSHManager:
             timeout: Connection timeout in seconds
 
         Returns:
-            True if connection successful, False otherwise
+            True if the server accepts one of those keys; False if the
+            configured key does not exist yet or no key is accepted (i.e.
+            bootstrap is needed)
+
+        Raises:
+            HostKeyChangedError: The server host key changed
+            ServerUnreachableError: The server cannot be reached
+            SSHError: The key cannot be loaded (like an unreachable server,
+                not fixed by uploading a key, so never bootstrap)
         """
         try:
-            key = paramiko.RSAKey.from_private_key_file(str(self.private_key_path))
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(self._host_key_policy())
+            key = load_private_key(self.private_key_path)
+        except FileNotFoundError:
+            key = None
+        else:
+            self._require_key_file_ssh_accepts()
 
-            try:
-                ssh.connect(
-                    hostname=hostname,
-                    port=port,
-                    username=self.server_user,
-                    pkey=key,
-                    timeout=timeout,
+        if key is None:
+            # Nothing to offer yet: still make sure the server is there, so a
+            # network problem is not mistaken for a first connection
+            client = self._open_client(
+                hostname, port, timeout, allow_agent=False, look_for_keys=False
+            )
+        else:
+            client = self._open_client(
+                hostname,
+                port,
+                timeout,
+                pkey=key,
+                allow_agent=_ssh_offers_agent_keys(self.server_user, hostname, port),
+                look_for_keys=False,
+            )
+
+        if client is None:
+            return False
+        client.close()
+        logger.info("SSH key authentication successful")
+        return True
+
+    def _require_key_file_ssh_accepts(self) -> None:
+        """Stop if `ssh` would refuse the key file for who can read it.
+
+        ssh ignores a private key of the user's own that group or others can
+        access. paramiko does not look, so the check would pass with a key
+        that `ssh` then does not use. A key owned by someone else (shared
+        through a group) is not judged, by ssh or here.
+
+        Raises:
+            SSHError: The key file is too widely accessible
+        """
+        if platform.system() == "Windows":
+            return
+        try:
+            info = self.private_key_path.stat()
+        except OSError:
+            return
+        mode = stat.S_IMODE(info.st_mode)
+        if info.st_uid == os.getuid() and mode & 0o077:
+            raise SSHError(
+                _(
+                    "error.ssh_key_too_open",
+                    path=self.private_key_path,
+                    mode=f"{mode:03o}",
+                    command=f"chmod 600 {shlex.quote(str(self.private_key_path))}",
                 )
-            finally:
-                ssh.close()
+            )
 
-            logger.info("SSH key authentication successful")
-            return True
+    def _public_key_to_install(self) -> str:
+        """The line of the .pub file, checked against the private key.
 
-        except HostKeyChangedError:
-            # A mismatch must abort; never treat it as "no key yet"
-            raise
-        except paramiko.AuthenticationException:
-            logger.warning("SSH key authentication failed")
-            return False
-        except Exception as e:
-            logger.error(f"SSH connection test failed: {e}")
-            return False
+        What is installed must be the public half of the key this account
+        connects with. A .pub left over from another key would authorize
+        that key instead (and `ssh` refuses a pair that does not match).
+
+        Raises:
+            SSHError: The .pub file is missing, unreadable, not a public
+                key, or belongs to another private key
+        """
+        path = self.public_key_path
+        if not path.exists():
+            raise SSHError(_("error.ssh_pubkey_not_found", path=path))
+        try:
+            # utf-8-sig: Windows tools like to put a byte order mark first
+            lines = path.read_text(encoding="utf-8-sig").splitlines()
+        except (OSError, UnicodeDecodeError) as e:
+            logger.error(f"Cannot read public key file {path}: {e}")
+            raise SSHError(_("error.ssh_pubkey_invalid", path=path))
+        line = next((line.strip() for line in lines if line.strip()), "")
+        fields = line.split()
+        if len(fields) < 2 or not _KEY_TYPE_PREFIX.match(fields[0]):
+            raise SSHError(_("error.ssh_pubkey_invalid", path=path))
+
+        try:
+            key = load_private_key(self.private_key_path)
+        except FileNotFoundError as e:
+            raise SSHError(
+                _("error.ssh_key_load_failed", path=self.private_key_path, error=e)
+            )
+        if (fields[0], fields[1]) != (key.get_name(), key.get_base64()):
+            raise SSHError(
+                _("error.ssh_pubkey_mismatch", path=path, key=self.private_key_path)
+            )
+        return line
+
+    def _exec(self, ssh: paramiko.SSHClient, command: str) -> Tuple[int, str, str]:
+        """Run a remote command: (exit status, output, error output).
+
+        Raises:
+            SSHError: The server stopped answering (a tunnel can die without
+                a word; unlimited, the wait for it would never end)
+        """
+        timeout = _REMOTE_COMMAND_TIMEOUT
+        try:
+            stdin, stdout, stderr = ssh.exec_command(command, timeout=timeout)
+            output = stdout.read()
+            error_output = stderr.read()
+            if not stdout.channel.status_event.wait(timeout):
+                raise socket.timeout()
+        except socket.timeout:
+            logger.error(f"No reply from the server within {timeout} seconds")
+            raise SSHError(_("error.ssh_remote_timeout", seconds=timeout))
+        return (
+            stdout.channel.recv_exit_status(),
+            output.decode("utf-8", errors="replace"),
+            error_output.decode("utf-8", errors="replace"),
+        )
 
     def _run_remote(self, ssh: paramiko.SSHClient, command: str) -> str:
         """Run a remote command and raise SSHError on non-zero exit status."""
-        stdin, stdout, stderr = ssh.exec_command(command)
-        exit_status = stdout.channel.recv_exit_status()
-        output = stdout.read().decode("utf-8", errors="replace")
+        exit_status, output, error = self._exec(ssh, command)
         if exit_status != 0:
-            error = stderr.read().decode("utf-8", errors="replace").strip()
             raise SSHError(
                 _(
                     "error.ssh_remote_command_failed",
                     command=command,
-                    error=error or exit_status,
+                    error=error.strip() or exit_status,
                 )
             )
         return output
 
     def _upload_public_key(
         self, hostname: str, port: int, password: Optional[str]
-    ) -> bool:
-        """Upload the public key; password=None uses agent/default keys.
+    ) -> Optional[bool]:
+        """Install the public key; password=None logs in with agent/default keys.
 
-        Raises raw paramiko exceptions on connection/auth failure so callers
-        can decide the fallback semantics; raises SSHError for remote command
-        failures.
+        Returns:
+            True if the key was added, False if it was already there, or
+            None if the server did not accept the login
+
+        Raises:
+            HostKeyChangedError: The server host key changed
+            SSHError: The server cannot be reached, or a remote command failed
         """
-        if not self.public_key_path.exists():
-            raise SSHError(_("error.ssh_pubkey_not_found", path=self.public_key_path))
+        public_key_text = self._public_key_to_install()
 
-        with open(self.public_key_path, "r", encoding="utf-8") as f:
-            public_key_text = f.read().strip()
-
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(self._host_key_policy())
+        if password is not None:
+            ssh = self._open_client(
+                hostname,
+                port,
+                30,
+                password=password,
+                allow_agent=False,
+                look_for_keys=False,
+            )
+        else:
+            ssh = self._open_client(
+                hostname, port, 30, allow_agent=True, look_for_keys=True
+            )
+        if ssh is None:
+            return None
 
         try:
-            if password is not None:
-                ssh.connect(
-                    hostname=hostname,
-                    port=port,
-                    username=self.server_user,
-                    password=password,
-                    timeout=30,
-                    allow_agent=False,
-                    look_for_keys=False,
-                )
-            else:
-                ssh.connect(
-                    hostname=hostname,
-                    port=port,
-                    username=self.server_user,
-                    timeout=30,
-                    allow_agent=True,
-                    look_for_keys=True,
-                )
-
             # Ensure .ssh directory exists
             self._run_remote(ssh, "mkdir -p ~/.ssh && chmod 700 ~/.ssh")
 
-            # Check if key already exists (|| true: absence is not an error)
-            stdin, stdout, stderr = ssh.exec_command(
-                "cat ~/.ssh/authorized_keys 2>/dev/null || true"
+            # Read what is there. No `2>/dev/null || true`: csh and tcsh
+            # take that for a redirection of the output and return nothing,
+            # which would switch off both checks below. A missing file just
+            # leaves the output empty (the exit status is not looked at)
+            _status, existing_keys, _error = self._exec(
+                ssh, "test -f ~/.ssh/authorized_keys && cat ~/.ssh/authorized_keys"
             )
-            existing_keys = stdout.read().decode("utf-8")
 
-            if public_key_text in existing_keys:
+            if _is_authorized(public_key_text, existing_keys):
                 logger.info("Public key already exists in authorized_keys")
                 return False
 
+            # Appended to an unterminated last line, our key would be glued
+            # onto it: sshd would not see the new key, and a last entry
+            # without a comment would stop working as well. The line break
+            # goes in with the key, in one write
+            unterminated = bool(existing_keys) and not existing_keys.endswith("\n")
+            line_break = "\\n" if unterminated else ""
+
+            # printf, not echo: the key's comment is free text, and the echo
+            # of zsh, dash and sh expands backslash sequences in it (\n, \t,
+            # \c, \U...). printf leaves an argument printed with %s alone
             escaped_key = public_key_text.replace("'", "'\"'\"'")
-            self._run_remote(ssh, f"echo '{escaped_key}' >> ~/.ssh/authorized_keys")
+            self._run_remote(
+                ssh,
+                f"printf '{line_break}%s\\n' '{escaped_key}'"
+                " >> ~/.ssh/authorized_keys",
+            )
             self._run_remote(ssh, "chmod 600 ~/.ssh/authorized_keys")
 
             logger.info("Public key uploaded to remote server")
             return True
+        except SSHError:
+            raise
+        except Exception as e:
+            # Channel-level failures after a successful login
+            logger.error(f"Failed to upload public key: {e}")
+            raise SSHError(_("error.ssh_upload_failed", error=_reason(e)))
         finally:
             ssh.close()
 
@@ -294,13 +830,15 @@ class SSHManager:
 
         Returns:
             True if key was uploaded, False if already exists
+
+        Raises:
+            HostKeyChangedError: The server host key changed
+            SSHError: Wrong password, unreachable server, or a failed
+                remote command
         """
-        try:
-            return self._upload_public_key(hostname, port, password)
-        except (HostKeyChangedError, SSHError):
-            raise
-        except paramiko.AuthenticationException as e:
-            logger.error(f"SSH authentication failed: {e}")
+        uploaded = self._upload_public_key(hostname, port, password)
+        if uploaded is None:
+            logger.error("SSH password authentication failed")
             raise SSHError(
                 _(
                     "error.ssh_auth_failed_detail",
@@ -308,9 +846,7 @@ class SSHManager:
                     hostname=hostname,
                 )
             )
-        except Exception as e:
-            logger.error(f"Failed to upload public key: {e}")
-            raise SSHError(_("error.ssh_upload_failed", error=e))
+        return uploaded
 
     def upload_public_key_with_existing_keys(
         self, hostname: str, port: int
@@ -322,20 +858,31 @@ class SSHManager:
             True if uploaded, False if already present, or None when the
             existing keys were not accepted (caller should fall back to
             password authentication)
-        """
-        try:
-            return self._upload_public_key(hostname, port, password=None)
-        except (HostKeyChangedError, SSHError):
-            raise
-        except paramiko.AuthenticationException:
-            logger.debug("Existing keys not accepted by server")
-            return None
-        except Exception as e:
-            # e.g. "Too many authentication failures" when the agent holds
-            # more keys than the server's MaxAuthTries; fall back silently
-            logger.debug(f"Existing-key upload attempt failed: {e}")
-            return None
 
+        Raises:
+            HostKeyChangedError: The server host key changed
+            SSHError: Unreachable server or a failed remote command; a
+                password would not help with either
+        """
+        return self._upload_public_key(hostname, port, password=None)
+
+    def _ssh_options(self) -> List[Tuple[str, str]]:
+        """What `ssh` is told besides where to connect, as (name, value).
+
+        The same for the Host block and for the direct command line, which
+        lead to the same server and must not drift apart.
+        """
+        return [
+            ("IdentityFile", _config_path(self.private_key_path)),
+            ("PreferredAuthentications", "publickey"),
+            ("HostKeyAlias", self.host_alias),
+            ("StrictHostKeyChecking", "accept-new"),
+            ("UserKnownHostsFile", _config_path(self.known_hosts_path)),
+            ("ServerAliveInterval", "30"),
+            ("ServerAliveCountMax", "3"),
+        ]
+
+    @_reports_config_file_errors
     def update_ssh_config(
         self, tunnel_info: TunnelInfo, ports: Optional[List[int]] = None
     ) -> None:
@@ -345,6 +892,9 @@ class SSHManager:
         Args:
             tunnel_info: TunnelInfo object with hostname and port
             ports: Optional list of local ports to forward
+
+        Raises:
+            SSHError: The config file cannot be read or written
         """
         if not self.ssh_config_path.parent.exists():
             self.ssh_config_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -352,12 +902,12 @@ class SSHManager:
         # Create config file if not exists
         if not self.ssh_config_path.exists():
             self.ssh_config_path.touch(mode=0o600)
-            with open(self.ssh_config_path, "w", encoding="utf-8") as f:
+            with open(self.ssh_config_path, "w", **_USER_FILE) as f:
                 f.write("# SSH config file\n")
             logger.info(f"Created SSH config file: {self.ssh_config_path}")
 
         # Read existing config
-        with open(self.ssh_config_path, "r", encoding="utf-8") as f:
+        with open(self.ssh_config_path, "r", **_USER_FILE) as f:
             lines = f.readlines()
 
         # Find and update/create host block
@@ -368,14 +918,8 @@ class SSHManager:
             f"Host {self.host_alias}\n",
             f"\tHostName {tunnel_info.hostname}\n",
             f"\tPort {tunnel_info.port}\n",
-            f"\tUser {self.server_user}\n",
-            f"\tIdentityFile {self.private_key_path}\n",
-            f"\tPreferredAuthentications publickey\n",
-            f"\tHostKeyAlias {self.host_alias}\n",
-            f"\tStrictHostKeyChecking accept-new\n",
-            f"\tUserKnownHostsFile {self.known_hosts_path}\n",
-            f"\tServerAliveInterval 30\n",
-            f"\tServerAliveCountMax 3\n",
+            f"\tUser {_config_token(self.server_user)}\n",
+            *(f"\t{name} {value}\n" for name, value in self._ssh_options()),
         ]
 
         # Add port forwarding if specified
@@ -393,7 +937,7 @@ class SSHManager:
             lines.extend(new_block)
 
         # Write updated config
-        with open(self.ssh_config_path, "w", encoding="utf-8") as f:
+        with open(self.ssh_config_path, "w", **_USER_FILE) as f:
             f.writelines(lines)
 
         logger.info(f"Updated SSH config: {self.ssh_config_path}")
@@ -410,21 +954,25 @@ class SSHManager:
                 return i, len(lines)
         return -1, -1
 
+    @_reports_config_file_errors
     def remove_host_block(self) -> bool:
         """Remove this alias's Host block from ~/.ssh/config.
 
         Returns:
             True if a block was removed, False if none existed
+
+        Raises:
+            SSHError: The config file cannot be read or written
         """
         if not self.ssh_config_path.exists():
             return False
-        with open(self.ssh_config_path, "r", encoding="utf-8") as f:
+        with open(self.ssh_config_path, "r", **_USER_FILE) as f:
             lines = f.readlines()
         start, end = self._find_host_block(lines)
         if start < 0:
             return False
         del lines[start:end]
-        with open(self.ssh_config_path, "w", encoding="utf-8") as f:
+        with open(self.ssh_config_path, "w", **_USER_FILE) as f:
             f.writelines(lines)
         logger.info(f"Removed SSH config block for {self.host_alias}")
         return True
@@ -436,27 +984,18 @@ class SSHManager:
     ) -> List[str]:
         """Build the ssh command line for a direct or alias-based connection."""
         if tunnel_info:
-            # Direct connection with tunnel info
+            # Direct connection with tunnel info. -o values are parsed like
+            # ssh_config lines, so the options are those of the Host block
+            # (IdentityFile rather than -i, which would choke on a percent
+            # sign in the path)
             ssh_command = [
                 "ssh",
                 f"{self.server_user}@{tunnel_info.hostname}",
                 "-p",
                 str(tunnel_info.port),
-                "-i",
-                str(self.private_key_path),
-                "-o",
-                "PreferredAuthentications=publickey",
-                "-o",
-                f"HostKeyAlias={self.host_alias}",
-                "-o",
-                "StrictHostKeyChecking=accept-new",
-                "-o",
-                f"UserKnownHostsFile={self.known_hosts_path}",
-                "-o",
-                "ServerAliveInterval=30",
-                "-o",
-                "ServerAliveCountMax=3",
             ]
+            for name, value in self._ssh_options():
+                ssh_command.extend(["-o", f"{name}={value}"])
         else:
             # Use configured alias
             ssh_command = ["ssh", self.host_alias]

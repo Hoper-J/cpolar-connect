@@ -3,6 +3,7 @@ Tests for legacy single-account layout migration into accounts/default.
 """
 
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -41,8 +42,9 @@ def test_full_migration(isolated_home):
     for f in OLD_FILES:
         assert (dst / f).exists()
         assert not (root / f).exists()
-    assert stat.S_IMODE((dst / ".password").stat().st_mode) == 0o600
-    assert stat.S_IMODE(dst.stat().st_mode) == 0o700
+    if sys.platform != "win32":  # no POSIX permission bits on Windows
+        assert stat.S_IMODE((dst / ".password").stat().st_mode) == 0o600
+        assert stat.S_IMODE(dst.stat().st_mode) == 0o700
     assert read_current_account() == "default"
     assert (dst / ".password").read_text(encoding="utf-8") == "secret"
     # Idempotent: a second run does nothing
@@ -97,6 +99,23 @@ def test_migration_rewrites_ssh_config_known_hosts_path(isolated_home):
     content = (ssh_dir / "config").read_text(encoding="utf-8")
     assert str(root / "accounts" / "default" / "known_hosts") in content
     assert f"UserKnownHostsFile {old_path}\n" not in content
+
+
+def test_migration_copes_with_an_ssh_config_that_is_not_utf8(isolated_home):
+    root = _old_layout(isolated_home)
+    ssh_dir = isolated_home / ".ssh"
+    ssh_dir.mkdir()
+    theirs = "# 公司的服务器\n".encode("gbk")
+    old_path = root / "known_hosts"
+    block = f"Host cpolar-server\n\tUserKnownHostsFile {old_path}\n"
+    (ssh_dir / "config").write_bytes(theirs + block.encode())
+
+    assert ConfigManager().ensure_migrated() is True
+
+    # Their bytes are intact; only line ends follow the platform, as before
+    content = (ssh_dir / "config").read_bytes().replace(b"\r\n", b"\n")
+    assert content.startswith(theirs)
+    assert str(root / "accounts" / "default" / "known_hosts").encode() in content
 
 
 def test_concurrent_rename_tolerated(isolated_home, monkeypatch):

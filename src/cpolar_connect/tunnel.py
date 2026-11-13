@@ -6,12 +6,17 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from bs4 import BeautifulSoup
 
-from .exceptions import NetworkError, TunnelError, TunnelNotFoundError
+from .exceptions import (
+    NetworkError,
+    TunnelError,
+    TunnelNameNotFoundError,
+    TunnelNotFoundError,
+)
 from .i18n import _
 
 logger = logging.getLogger(__name__)
@@ -20,25 +25,74 @@ logger = logging.getLogger(__name__)
 class TunnelInfo:
     """Data class for tunnel information"""
 
-    def __init__(self, url: str, hostname: str, port: int, name: str = "ssh"):
+    def __init__(
+        self,
+        url: str,
+        hostname: str,
+        port: int,
+        name: str = "ssh",
+        other_candidates: Optional[List[str]] = None,
+        is_ssh: bool = True,
+    ):
         self.url = url  # Full URL like tcp://xxx:port
         self.hostname = hostname
         self.port = port
         self.name = name
-        self.active = True
+        # Names of the other tunnels the selection could equally have picked:
+        # same-named ones, or the rest of the tier when auto-picking
+        self.other_candidates = other_candidates or []
+        # Whether the tunnel leads to local port 22 on the server. False for
+        # a pick from the other TCP tunnels, made when no such tunnel is online
+        self.is_ssh = is_ssh
 
     def __str__(self):
         return f"Tunnel(name={self.name}, url={self.url}, host={self.hostname}, port={self.port})"
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary"""
+        """The tunnel as `status -f json` reports it"""
         return {
+            "name": self.name,
             "url": self.url,
             "hostname": self.hostname,
             "port": self.port,
-            "name": self.name,
-            "active": self.active,
+            "other_candidates": self.other_candidates,
         }
+
+
+def selection_warnings(tunnel_info: TunnelInfo, account: str) -> List[str]:
+    """Warnings to show when the choice of tunnel was ambiguous.
+
+    Several machines can share one cpolar account. Tunnels with different
+    names are told apart with tunnel.name; identically named ones are not.
+    """
+    others = tunnel_info.other_candidates
+    duplicates = [name for name in others if name == tunnel_info.name]
+    alternatives = [name for name in others if name != tunnel_info.name]
+
+    warnings = []
+    if duplicates:
+        warnings.append(
+            _(
+                "warning.duplicate_tunnel_name",
+                name=tunnel_info.name,
+                count=len(duplicates) + 1,
+                url=tunnel_info.url,
+            )
+        )
+    if alternatives:
+        warnings.append(
+            _(
+                (
+                    "warning.multiple_ssh_tunnels"
+                    if tunnel_info.is_ssh
+                    else "warning.multiple_tcp_tunnels"
+                ),
+                chosen=tunnel_info.name,
+                others=", ".join(alternatives),
+                command=_("hint.set_tunnel_name_command", account=account),
+            )
+        )
+    return warnings
 
 
 class TunnelManager:
@@ -59,9 +113,14 @@ class TunnelManager:
         self.status_url = f"{base_url}/status"
         self.auth_url = f"{base_url}/auth"
 
-    def get_tunnel_info(self) -> TunnelInfo:
+    def get_tunnel_info(self, tunnel_name: Optional[str] = None) -> TunnelInfo:
         """
         Get tunnel information from cpolar status page
+
+        Args:
+            tunnel_name: Use the tunnel with this dashboard name (needed when
+                several machines share one cpolar account); None picks the
+                first tunnel forwarding to local port 22
 
         Returns:
             TunnelInfo object containing tunnel details
@@ -76,17 +135,26 @@ class TunnelManager:
                 raise TunnelError(_("error.session_expired"))
 
             # Parse tunnel information
-            tunnel_url = self._parse_tunnel_url(response.text)
+            name, tunnel_url, others, is_ssh = self._find_tunnel(
+                response.text, tunnel_name
+            )
 
             # Extract hostname and port
             hostname, port = self._extract_hostname_and_port(tunnel_url)
 
             # Create TunnelInfo object
             tunnel_info = TunnelInfo(
-                url=tunnel_url, hostname=hostname, port=port, name="ssh"
+                url=tunnel_url,
+                hostname=hostname,
+                port=port,
+                name=name,
+                other_candidates=others,
+                is_ssh=is_ssh,
             )
 
             logger.info(f"Tunnel info: {tunnel_info}")
+            if others:
+                logger.warning(f"Other tunnels that qualified equally: {others}")
 
             return tunnel_info
 
@@ -99,71 +167,57 @@ class TunnelManager:
             logger.error(f"Error getting tunnel info: {e}")
             raise TunnelError(_("error.tunnel", error=e))
 
-    def _parse_tunnel_url(
-        self, html_content: str, skip_tunnels: Optional[list] = None
-    ) -> str:
+    def _find_tunnel(
+        self,
+        html_content: str,
+        tunnel_name: Optional[str] = None,
+        skip_tunnels: Optional[list] = None,
+    ) -> Tuple[str, str, List[str], bool]:
         """
-        Parse tunnel URL from status page HTML
+        Pick the tunnel to connect to from status page HTML
 
         Args:
             html_content: HTML content of status page
-            skip_tunnels: List of tunnel names to skip (default: ['remoteDesktop'])
+            tunnel_name: Use the tunnel with exactly this name; None picks
+                among all tunnels. Either way a tunnel to the SSH port
+                (local port 22) comes before any other TCP tunnel
+            skip_tunnels: Tunnel names never auto-picked
+                (default: ['remoteDesktop'])
 
         Returns:
-            Tunnel URL (e.g., "tcp://x.tcp.vip.cpolar.cn:12345")
+            (name, URL, names of the other tunnels that qualified equally:
+            same-named ones, or the rest of the auto-pick tier, whether the
+            pick leads to the SSH port)
+
+        Raises:
+            TunnelNameNotFoundError: tunnel_name is not online, although
+                other tunnels are
+            TunnelNotFoundError: No usable tunnel on the page
         """
         if skip_tunnels is None:
             skip_tunnels = ["remoteDesktop"]
 
-        soup = BeautifulSoup(html_content, "html.parser")
-        tcp_pattern = re.compile(r"tcp://[a-zA-Z0-9\.\-]+:\d+")
+        tunnels = self._parse_tcp_tunnels(html_content)
 
-        # Method 1: Parse table to find SSH tunnel (local port 22)
-        # Table structure: 隧道名称(td) | URL(th) | 地区(td) | 本地地址(td) | 创建时间(td)
-        # Note: URL column uses <th scope="row"> instead of <td>
-        tables = soup.find_all("table")
-        for table in tables:
-            rows = table.find_all("tr")
-            for row in rows:
-                # Get all cells (both td and th)
-                all_cells = row.find_all(["td", "th"])
-                # Skip header row (all th)
-                if len(all_cells) >= 5 and all_cells[0].name == "td":
-                    tunnel_name = all_cells[0].get_text(strip=True)
-                    tunnel_url = all_cells[1].get_text(strip=True)
-                    local_addr = all_cells[3].get_text(strip=True)
+        if tunnel_name:
+            candidates = [t for t in tunnels if t[0] == tunnel_name]
+        else:
+            candidates = [t for t in tunnels if t[0] not in skip_tunnels]
+        # Prefer SSH tunnels (local port 22) over other TCP tunnels
+        ssh_tunnels = [t for t in candidates if t[2].endswith(":22")]
+        matches = ssh_tunnels or candidates
 
-                    # Skip tunnels in the skip list
-                    if tunnel_name in skip_tunnels:
-                        logger.debug(f"Skipping tunnel: {tunnel_name}")
-                        continue
+        if matches:
+            name, url, _local = matches[0]
+            logger.debug(f"Selected tunnel {name!r}: {url}")
+            return name, url, [t[0] for t in matches[1:]], bool(ssh_tunnels)
 
-                    # Prefer SSH tunnel (local port 22)
-                    if tunnel_url.startswith("tcp://") and local_addr.endswith(":22"):
-                        logger.debug(
-                            f"Found SSH tunnel via table: {tunnel_url} (name={tunnel_name})"
-                        )
-                        return tunnel_url
-
-        # Method 2: Fallback - find any TCP tunnel not in skip list
-        for table in tables:
-            rows = table.find_all("tr")
-            for row in rows:
-                all_cells = row.find_all(["td", "th"])
-                if len(all_cells) >= 2 and all_cells[0].name == "td":
-                    tunnel_name = all_cells[0].get_text(strip=True)
-                    tunnel_url = all_cells[1].get_text(strip=True)
-
-                    if tunnel_name in skip_tunnels:
-                        continue
-
-                    if tunnel_url.startswith("tcp://") and tcp_pattern.match(
-                        tunnel_url
-                    ):
-                        logger.debug(
-                            f"Found TCP tunnel via table fallback: {tunnel_url}"
-                        )
-                        return tunnel_url
+        if tunnel_name and tunnels:
+            available = ", ".join(t[0] for t in tunnels)
+            logger.error(f"Tunnel {tunnel_name!r} not found (online: {available})")
+            raise TunnelNameNotFoundError(
+                _("error.tunnel_name_not_found", name=tunnel_name, available=available)
+            )
 
         # Save page content for debugging to logs directory
         try:
@@ -179,6 +233,34 @@ class TunnelManager:
 
         logger.error("Could not find tunnel URL in status page")
         raise TunnelNotFoundError(_("tunnel.not_found"))
+
+    def _parse_tcp_tunnels(self, html_content: str) -> List[Tuple[str, str, str]]:
+        """
+        List every TCP tunnel on the status page, in page order
+
+        Table structure: 隧道名称(td) | URL(th) | 地区(td) | 本地地址(td) | 创建时间(td)
+        Note: URL column uses <th scope="row"> instead of <td>
+
+        Returns:
+            (name, URL, local address) tuples; local address is "" when the
+            row has no such column
+        """
+        soup = BeautifulSoup(html_content, "html.parser")
+        tcp_pattern = re.compile(r"tcp://[a-zA-Z0-9\.\-]+:\d+")
+
+        tunnels = []
+        for table in soup.find_all("table"):
+            for row in table.find_all("tr"):
+                # Get all cells (both td and th); header rows are all th
+                cells = row.find_all(["td", "th"])
+                if len(cells) < 2 or cells[0].name != "td":
+                    continue
+                url = cells[1].get_text(strip=True)
+                if not tcp_pattern.match(url):
+                    continue
+                local_addr = cells[3].get_text(strip=True) if len(cells) >= 5 else ""
+                tunnels.append((cells[0].get_text(strip=True), url, local_addr))
+        return tunnels
 
     def _extract_hostname_and_port(self, tunnel_url: str) -> Tuple[str, int]:
         """

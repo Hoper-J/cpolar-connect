@@ -52,10 +52,25 @@ class Prompts:
         self.skip_confirm = skip_confirm
         self.quiet = quiet
 
+    # True while a spinner_message line is waiting for its spinner_done
+    _spinner_open = False
+
+    def _end_spinner(self) -> None:
+        """Finish a spinner line that was never completed.
+
+        spinner_message leaves the cursor on its line for spinner_done to
+        overwrite. When the operation raises instead, whatever is printed
+        next would otherwise be appended to that line.
+        """
+        if self._spinner_open:
+            print()
+            self._spinner_open = False
+
     def intro(self, message: str) -> None:
         """Display intro banner"""
         if self.quiet:
             return
+        self._end_spinner()
         print()
         print(f"{CYAN}┌{RESET} {BOLD}{message}{RESET}")
 
@@ -63,6 +78,7 @@ class Prompts:
         """Display outro message"""
         if self.quiet:
             return
+        self._end_spinner()
         print(f"{GREEN}└{RESET} {message}")
         print()
 
@@ -70,6 +86,7 @@ class Prompts:
         """Display cancellation message"""
         if self.quiet:
             return
+        self._end_spinner()
         print(f"{YELLOW}└{RESET} {message}")
         print()
 
@@ -90,32 +107,43 @@ class Prompts:
             "error": f"{RED}{STEP_ERROR}{RESET}",
         }
         symbol = symbols.get(status, symbols["active"])
+        self._end_spinner()
         print(f"{symbol}  {message}")
 
     def log(self, message: str) -> None:
         """Log a plain message"""
         if self.quiet:
             return
+        self._end_spinner()
         print(f"│  {message}")
 
     def log_info(self, message: str) -> None:
         """Log info message"""
         if self.quiet:
             return
+        self._end_spinner()
+        print(f"│  {message}")
+
+    def log_hint(self, message: str) -> None:
+        """Say what to do about an error; like the error, shown in quiet mode"""
+        self._end_spinner()
         print(f"│  {message}")
 
     def log_warn(self, message: str) -> None:
         """Log warning message"""
+        self._end_spinner()
         print(f"│  {YELLOW}⚠{RESET} {message}")
 
     def log_error(self, message: str) -> None:
         """Log error message"""
+        self._end_spinner()
         print(f"│  {RED}✗{RESET} {message}")
 
     def log_success(self, message: str) -> None:
         """Log success message"""
         if self.quiet:
             return
+        self._end_spinner()
         print(f"│  {GREEN}✓{RESET} {message}")
 
     def note(self, message: str, title: Optional[str] = None) -> None:
@@ -128,6 +156,7 @@ class Prompts:
         """
         if self.quiet:
             return
+        self._end_spinner()
         print("│")
         if title:
             print(f"│  {DIM}─── {title} ───{RESET}")
@@ -155,6 +184,7 @@ class Prompts:
         hint = f" {DIM}({default}){RESET}" if default else ""
         prompt_str = f"│  {message}{hint}: "
 
+        self._end_spinner()
         try:
             result = input(prompt_str).strip()
             if not result and default:
@@ -177,6 +207,7 @@ class Prompts:
         Returns:
             Password or None if cancelled
         """
+        self._end_spinner()
         try:
             return getpass(f"│  {message}: ")
         except (KeyboardInterrupt, EOFError):
@@ -200,6 +231,7 @@ class Prompts:
         hint = "Y/n" if default else "y/N"
         prompt_str = f"│  {message} ({hint}): "
 
+        self._end_spinner()
         try:
             result = input(prompt_str).strip().lower()
             if not result:
@@ -227,6 +259,7 @@ class Prompts:
         Returns:
             Selected value or None if cancelled
         """
+        self._end_spinner()
         print(f"│  {message}")
 
         for i, choice in enumerate(choices, 1):
@@ -280,6 +313,7 @@ class Prompts:
             List of selected values or None if cancelled
         """
         initial = initial or []
+        self._end_spinner()
         print(f"│  {message}")
 
         for i, choice in enumerate(choices, 1):
@@ -326,9 +360,11 @@ class Prompts:
         """
         if self.quiet:
             return
+        self._end_spinner()
         # Store display width for clearing (not byte length)
         self._last_spinner_width = _display_width(f"│  ◌ {message}...")
         print(f"│  {CYAN}◌{RESET} {message}...", end="", flush=True)
+        self._spinner_open = True
 
     def spinner_done(self, message: str, success: bool = True) -> None:
         """
@@ -346,3 +382,4 @@ class Prompts:
         clear_width = getattr(self, "_last_spinner_width", 50)
         padding = max(0, clear_width - done_width)
         print(f"\r│  {symbol} {message}" + " " * padding)
+        self._spinner_open = False

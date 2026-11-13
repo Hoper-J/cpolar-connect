@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased]
+
+### ✨ 新特性 / New Features
+- 新增按账户的 `tunnel.name`：按 cpolar 控制台上的隧道名称选择隧道，多台机器可以共用一个 cpolar 账号；存在其他 SSH 隧道、同名隧道或指定的名称不在线时给出提示和修复命令；新增 `config unset` / New per-account `tunnel.name` picks a tunnel by its dashboard name, so several machines can share one cpolar login; other SSH tunnels, same-named tunnels and a name that is not online are reported together with the command that fixes them; new `config unset`
+- `ssh.key_path` 可指向已有的无口令 RSA/Ed25519/ECDSA 密钥（RSA、ECDSA 也可以是 PKCS#8 格式）；服务器已经接受该密钥时不再上传 / `ssh.key_path` may point at an existing passphrase-free RSA/Ed25519/ECDSA key (RSA and ECDSA also in PKCS#8 form); nothing is uploaded when the server already accepts it
+- 连不上服务器时（隧道域名无法解析、端口不通、握手失败）仍把隧道的当前地址写入 `~/.ssh/config`，并在报错后说明；同一账号下有多条候选隧道而未指定 `tunnel.name` 时除外（#3）/ When the server cannot be reached (the tunnel's host name does not resolve, nothing answers, the handshake fails), the tunnel's current address is still written to `~/.ssh/config` and the run says so; not when several tunnels qualify and no `tunnel.name` is set (#3)
+- `doctor` 新增“隧道域名解析”检查：有些网络不解析隧道域名（#3）/ `doctor` gains a "Tunnel DNS" check: some networks do not resolve tunnel host names (#3)
+
+### 🔒 安全 / Security
+- 主机密钥：一旦有记录，只接受记录中的密钥。此前另一种类型的密钥会被当作首次连接而接受并记录，隧道路径上的任何人都可以借此冒充服务器 / Host keys: once a key is on record, only a key on record is accepted. A key of another type used to be accepted and recorded as on a first connection, which let anyone on the tunnel's path pose as the server
+- 主机密钥文件中损坏的记录会报错，不再被跳过 / A damaged record in the host key file is an error instead of being skipped
+
+### 🐛 修复 / Fixes
+- 修复服务器不可达、握手失败等情况被当作“首次连接”而要求输入服务器密码的问题；这些情况现在各有明确的报错，服务器不提供密码登录时也会直接说明 / Fix an unreachable server or a failed handshake being taken for a first connection and answered with a prompt for the server password; each now ends in its own clear error, and a server that offers no password login says so
+- 隧道域名无法解析时给出专门的提示（原因在本机网络的 DNS），不再建议检查服务器上的 sshd（#3）/ A tunnel host name that does not resolve gets a message of its own (the cause is the local network's DNS) instead of advice about sshd on the server (#3)
+- 修复 `~/.ssh/config` 不是 UTF-8（例如含 GBK 注释）或无法读写时崩溃的问题 / Fix crashes when `~/.ssh/config` is not UTF-8 (GBK comments, say) or cannot be read or written
+- 公钥上传：公钥始终独占一行（`authorized_keys` 末尾缺少换行时也是如此）；“已安装”按 sshd 的读法判断，不再做子串匹配；登录 shell 是 zsh、dash、csh、tcsh 时同样可用；服务器 60 秒没有回应就放弃 / Public key upload: the key always lands on a line of its own (also when `authorized_keys` lacks a final newline); "already installed" means an entry as sshd reads it, not a substring match; works with zsh, dash, csh and tcsh as the login shell; gives up after 60 seconds without a reply
+- 含空格、引号、`#`、`=`、`%` 的 ssh_config 值会被正确转义 / ssh_config values containing spaces, quotes, `#`, `=` or `%` are rendered so that OpenSSH reads them back unchanged
+- `init` 保留它没有问到的设置；消息里出现的命令都带账户名（`-a <账户>`），错误后的提示在静默模式下同样显示 / `init` keeps the settings it does not ask about; every command printed in a message names the account (`-a <name>`), and hints after an error are shown in quiet mode too
+
+### 🔧 改进 / Improvements
+- ⚠️ 依赖变化：需要 `paramiko>=3.2`，并显式依赖 `cryptography` / Dependency change: `paramiko>=3.2` is required, and `cryptography` is a declared dependency
+- ⚠️ 输出契约变化：`status -f json` 的 `tunnel` 新增 `name` 与 `other_candidates`；直连命令改用 `-o IdentityFile=` 传递密钥 / Contract change: `tunnel` in `status -f json` gains `name` and `other_candidates`; the direct ssh command passes the key as `-o IdentityFile=`
+
 ## [0.3.0] - 2026-07-10
 
 ### ✨ 新特性 / New Features

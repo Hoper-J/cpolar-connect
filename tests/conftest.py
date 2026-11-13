@@ -4,9 +4,159 @@ Shared fixtures for cpolar-connect tests.
 HTML samples are based on actual cpolar dashboard pages.
 """
 
+import socket
+import sys
+import threading
 from pathlib import Path
 
+import paramiko
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
+
+from cpolar_connect import i18n, ssh
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "posix_only: relies on POSIX permission bits or shells; skipped on Windows",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if sys.platform != "win32":
+        return
+    skip = pytest.mark.skip(reason="POSIX permission bits/shells; not on Windows")
+    for item in items:
+        if "posix_only" in item.keywords:
+            item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def isolated_environment(monkeypatch, tmp_path: Path):
+    """Keep the developer's home, accounts, ssh-agent and locale out of every test.
+
+    The i18n singleton latches its language on first use (and reads the real
+    ~/.cpolar_connect config to do so); it is reset per test and pinned to
+    English, so message assertions hold for any test order or developer setup.
+    """
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    # os.path.expanduser("~/...") reads these instead of Path.home()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("CPOLAR_LANG", "en")
+    for var in (
+        "CPOLAR_ACCOUNT",
+        "CPOLAR_PASSWORD",
+        "CPOLAR_LOG_LEVEL",
+        "SSH_AUTH_SOCK",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(i18n, "_i18n", None)
+    # `ssh -G` reads the real ~/.ssh/config whatever HOME says
+    monkeypatch.setattr(ssh, "_ssh_offers_agent_keys", lambda user, host, port: True)
+
+
+@pytest.fixture
+def write_private_key():
+    """write(path, kind="ed25519", passphrase=b"", pkcs8=False) puts a private
+    key file there, as ssh-keygen writes it (OpenSSH format) or as openssl
+    does (PKCS#8), readable by its owner only. Returns the key."""
+
+    def write(path: Path, kind: str = "ed25519", passphrase: bytes = b"", pkcs8=False):
+        key = {
+            "rsa": lambda: rsa.generate_private_key(65537, key_size=2048),
+            "ed25519": ed25519.Ed25519PrivateKey.generate,
+            "ecdsa": lambda: ec.generate_private_key(ec.SECP256R1()),
+        }[kind]()
+        encryption = (
+            serialization.BestAvailableEncryption(passphrase)
+            if passphrase
+            else serialization.NoEncryption()
+        )
+        key_format = (
+            serialization.PrivateFormat.PKCS8
+            if pkcs8
+            else serialization.PrivateFormat.OpenSSH
+        )
+        path.write_bytes(
+            key.private_bytes(serialization.Encoding.PEM, key_format, encryption)
+        )
+        path.chmod(0o600)
+        return key
+
+    return write
+
+
+class LoopbackServer(paramiko.ServerInterface):
+    """Accepts the password "right" and remembers every password it is sent.
+
+    With accept_commands it also takes commands to run, and then says nothing
+    more: what a server looks like once the connection to it has gone dead.
+    """
+
+    def __init__(self, accept_commands=False):
+        self.passwords = []
+        self.commands = []
+        self._accept_commands = accept_commands
+
+    def get_allowed_auths(self, username):
+        return "password"
+
+    def check_auth_password(self, username, password):
+        self.passwords.append(password)
+        if password == "right":
+            return paramiko.AUTH_SUCCESSFUL
+        return paramiko.AUTH_FAILED
+
+    def check_channel_request(self, kind, chanid):
+        if self._accept_commands and kind == "session":
+            return paramiko.OPEN_SUCCEEDED
+        return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+
+    def check_channel_exec_request(self, channel, command):
+        self.commands.append(command.decode("utf-8", errors="replace"))
+        return self._accept_commands
+
+
+@pytest.fixture
+def ssh_server():
+    """Start real SSH servers on the loopback interface, each with the host
+    keys it is given: start(keys, accept_commands=False) -> (port, the
+    server's LoopbackServer)."""
+    listeners, transports = [], []
+
+    def start(host_keys, accept_commands=False):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(5)
+        listeners.append(listener)
+        interface = LoopbackServer(accept_commands)
+
+        def serve():
+            while True:
+                try:
+                    connection, _address = listener.accept()
+                except OSError:
+                    return  # closed by the teardown
+                transport = paramiko.Transport(connection)
+                transports.append(transport)
+                for key in host_keys:
+                    transport.add_server_key(key)
+                try:
+                    transport.start_server(server=interface)
+                except Exception:
+                    pass  # a client that walks away is part of the tests
+
+        threading.Thread(target=serve, daemon=True).start()
+        return listener.getsockname()[1], interface
+
+    yield start
+    for listener in listeners:
+        listener.close()
+    for transport in transports:
+        transport.close()
 
 
 @pytest.fixture

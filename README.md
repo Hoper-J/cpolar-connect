@@ -170,6 +170,15 @@ cpolar-connect config set server.user root
 # 修改端口
 cpolar-connect config set server.ports 8080,3000
 
+# 同一个 cpolar 账号下有多台机器时，指定使用哪条隧道（名称见 cpolar 控制台）
+cpolar-connect config set tunnel.name ssh
+# 恢复为自动选择第一条 SSH 隧道
+cpolar-connect config unset tunnel.name
+
+# 直接使用一把服务器已经认可的密钥，跳过公钥上传（以 ~/.ssh/id_ed25519 为例）。
+# 该文件必须已经存在，且是无口令的 RSA/Ed25519/ECDSA 私钥；路径不对时会有提示
+cpolar-connect config set ssh.key_path ~/.ssh/id_ed25519
+
 # 直接编辑配置文件
 cpolar-connect config edit
 ```
@@ -220,7 +229,7 @@ cpolar-connect
 
 - 首次连接自动记录服务器主机密钥到 `~/.cpolar_connect/accounts/<账户>/known_hosts`（TOFU，按 SSH 别名存储，不受隧道地址变化影响）
 - 之后每次连接（包括密钥测试与公钥上传）都会校验，密钥不一致将拒绝连接
-- 服务器重装等导致主机密钥合法变更时，运行以下命令重置后重连：
+- 服务器重装，或让某个账户改连另一台机器（例如修改了 `tunnel.name`）导致主机密钥合法变更时，运行以下命令重置后重连（非当前账户请加 `-a <账户>`）：
 
 ```bash
 cpolar-connect config clear-hostkey
@@ -243,6 +252,7 @@ cpc account remove work   # 删除账户（连带清理对应的 SSH 配置块�
 - 账户解析优先级：`-a` 参数 > `CPOLAR_ACCOUNT` 环境变量 > 当前账户 > `default`
 - 旧版单账户配置会在升级后首次运行时自动迁移为 `default` 账户，无需任何操作
 - 注意：`CPOLAR_PASSWORD` 环境变量对所有账户生效，各账户密码不同时请勿使用
+- 多台机器共用同一个 cpolar 账号时，请为每个账户设置 `tunnel.name`（如 `cpc -a work config set tunnel.name ssh`），否则都会连到第一条 SSH 隧道（检测到多条时会提示）。隧道名相同的两台机器无法用 `tunnel.name` 区分，需要在其中一台的 cpolar 配置里给隧道改名
 - 已知限制：PyPI 上存在同名的 `cpc` 包（竞赛编程工具）。若你已安装该包，用 pipx/uv tool 安装本工具时会因命令名冲突需要 `--force`；主入口 `cpolar-connect` 不受影响
 
 ## 📚 使用场景
@@ -304,6 +314,7 @@ cpolar-connect doctor
 | SSH 配置 | ~/.ssh/config 配置项 |
 | Cpolar 认证 | 账户验证 |
 | 隧道状态 | 活动隧道检测 |
+| 隧道域名解析 | 隧道域名在当前网络能否解析 |
 
 ## ❓ 常见问题
 
@@ -312,6 +323,13 @@ cpolar-connect doctor
 2. 确认服务器 cpolar 正在运行：`sudo systemctl status cpolar`
 3. 确认用户名密码正确
 4. 查看详细日志：`CPOLAR_LOG_LEVEL=DEBUG cpolar-connect`
+
+### 提示无法解析隧道域名？
+有些网络（例如部分校园网、公司网络）的 DNS 不解析隧道域名。这时连接会失败并提示“本机无法解析隧道域名”，`cpolar-connect doctor` 的“隧道域名解析”一项也会显示失败。这与服务器无关，可以：
+- 换一个网络（例如手机热点）或 DNS 服务器后重试；
+- 或者用其他方式查到该域名的 IP，写入 hosts 文件后重试。
+
+即使这次没有连上，`~/.ssh/config` 里的地址也会更新为隧道的当前地址（同一个 cpolar 账号下有多条 SSH 隧道而没有指定 `tunnel.name` 时除外）。写脚本时可以用 `cpolar-connect -f json status` 取得当前域名，即输出中的 `tunnel.hostname`。
 
 ### 如何卸载？
 ```bash

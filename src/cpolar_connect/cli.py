@@ -9,10 +9,11 @@ import os
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import click
 from rich.console import Console
+from rich.markup import escape
 
 from . import __version__
 from .auth import CpolarAuth
@@ -27,15 +28,19 @@ from .config import (
 )
 from .exceptions import (
     AuthenticationError,
+    HostKeyChangedError,
     NetworkError,
+    PasswordLoginUnavailableError,
+    ServerUnreachableError,
     SSHError,
     TunnelError,
+    TunnelNameNotFoundError,
     TunnelNotFoundError,
 )
 from .i18n import _
 from .prompts import Prompts
-from .ssh import SSHManager
-from .tunnel import TunnelManager
+from .ssh import SSHManager, load_private_key
+from .tunnel import TunnelInfo, TunnelManager, selection_warnings
 
 console = Console()
 
@@ -177,15 +182,154 @@ def _verify_cpolar_credentials(
         return False
 
 
-def _print_server_hint(p: Prompts) -> None:
+def _print_server_hint(p: Prompts, intro_key: str = "tunnel.server_hint") -> None:
     """Tell the user which commands to run on the server to bring up cpolar."""
-    p.log_info(_("tunnel.server_hint"))
+    p.log_hint(_(intro_key))
     for key in (
         "doctor.cmd.server.status",
         "doctor.cmd.server.start",
         "doctor.cmd.server.tunnel",
     ):
-        p.log_info(f"  {_(key)}")
+        p.log_hint(f"  {_(key)}")
+
+
+def _print_tunnel_name_hint(p: Prompts, account: str) -> None:
+    """The configured tunnel is not online: a wrong name, or its machine is down."""
+    p.log_hint(
+        _(
+            "hint.tunnel_name_wrong",
+            command=_("hint.set_tunnel_name_command", account=account),
+        )
+    )
+    _print_server_hint(p, intro_key="hint.tunnel_machine_down")
+
+
+def _print_remedy(
+    p: Prompts,
+    error: Exception,
+    account: str,
+    auto_picked: Optional[TunnelInfo] = None,
+    recorded_alias: Optional[str] = None,
+) -> None:
+    """Say what to do about a failed connection, where that is known.
+
+    The one place that decides which hint follows which error, for every
+    command. A subclass is asked about before its base class.
+
+    Args:
+        auto_picked: The tunnel in use, if the account has no tunnel.name
+            and it was therefore picked automatically
+        recorded_alias: The SSH alias whose Host block was given the
+            tunnel's address although the server could not be reached
+    """
+    if isinstance(error, TunnelNameNotFoundError):
+        _print_tunnel_name_hint(p, account)
+    elif isinstance(error, TunnelNotFoundError):
+        _print_server_hint(p)
+    elif isinstance(error, HostKeyChangedError):
+        # The error is never downgraded; the hints only name benign causes
+        if auto_picked is not None:
+            # The machine is chosen anew on every run: with several machines
+            # on one cpolar login this may be just another machine, and
+            # clearing the recorded key would then re-point the account at it
+            p.log_hint(
+                _(
+                    "hint.host_key_changed_auto_tunnel",
+                    tunnel=auto_picked.name,
+                    command=_("hint.set_tunnel_name_command", account=account),
+                )
+            )
+        p.log_hint(_("hint.host_key_changed", account=account))
+    elif isinstance(error, PasswordLoginUnavailableError):
+        p.log_hint(
+            _(
+                "hint.password_login_unavailable",
+                public_key=error.public_key_path,
+                account=account,
+            )
+        )
+    elif isinstance(error, ServerUnreachableError):
+        if recorded_alias is not None:
+            # Whoever resolves or reaches the address by other means (a
+            # script, another network) finds it in the Host block
+            p.log_hint(_("hint.address_recorded", alias=recorded_alias))
+
+
+def _record_unreached_address(
+    p: Prompts,
+    ssh_manager: SSHManager,
+    tunnel_info: TunnelInfo,
+    ports: List[int],
+) -> Optional[str]:
+    """Write the tunnel's address to the Host block of a server that could
+    not be reached; returns the SSH alias if that was done.
+
+    Where the tunnel is comes from the dashboard, and stays right when this
+    machine cannot get there (a network whose DNS will not resolve the
+    tunnel's name, a blocked port). ssh, editors and the user's own scripts
+    look the address up in the Host block, so it is brought up to date
+    before the run gives up.
+    """
+    if tunnel_info.other_candidates:
+        # One of several tunnels that qualified equally, possibly another
+        # machine's: the address in the block may be the right one still
+        return None
+    try:
+        ssh_manager.update_ssh_config(tunnel_info, ports)
+    except SSHError as e:
+        # Worth saying, but not what ends this run
+        p.log_warn(str(e))
+        return None
+    return ssh_manager.host_alias
+
+
+def _connect_command(account: str) -> str:
+    """The command that connects this account, as short as it can be.
+
+    Plain `cpolar-connect` where that means this account anyway, which is
+    the everyday case; otherwise the account is named, so that the command
+    works as printed.
+    """
+    try:
+        plain_means = resolve_account(None)
+    except ConfigError:
+        plain_means = None
+    if plain_means == account:
+        return "cpolar-connect"
+    return f"cpolar-connect -a {account}"
+
+
+def _warn_ambiguous_tunnel(p: Prompts, tunnel_info, account: str) -> None:
+    """Several machines share this cpolar account: say which tunnel was used."""
+    for warning in selection_warnings(tunnel_info, account):
+        p.log_warn(warning)
+
+
+def _display_value(value) -> str:
+    """Render a config value; an unset optional setting is not shown as None."""
+    return _("config.value_unset") if value is None else str(value)
+
+
+def _note_config_side_effects(
+    p: Prompts, config_manager: ConfigManager, key: str, old_value, new_value
+) -> None:
+    """Point out what a changed setting means for the next connection."""
+    # `config get/set` take "tunnel.name" and "tunnel_name" alike
+    setting = key.replace(".", "_")
+    if setting == "tunnel_name":
+        # Host keys are recorded per account, not per tunnel
+        if new_value != old_value and config_manager.known_hosts_file.exists():
+            p.log_warn(
+                _("warning.tunnel_changed_hostkey", account=config_manager.account)
+            )
+    elif setting == "ssh_key_path":
+        key_path = Path(os.path.expanduser(str(new_value)))
+        try:
+            load_private_key(key_path)
+        except FileNotFoundError:
+            p.log_warn(_("warning.ssh_key_missing", path=key_path))
+        except SSHError as e:
+            p.log_warn(str(e))
 
 
 def _run_connect(ctx):
@@ -196,7 +340,7 @@ def _run_connect(ctx):
     output_format = ctx.obj["output_format"]
 
     if not config_manager.config_exists():
-        p.log_error(_("cli.no_config"))
+        p.log_error(_("cli.no_config", account=config_manager.account))
         sys.exit(1)
 
     try:
@@ -208,12 +352,14 @@ def _run_connect(ctx):
     # Check password availability
     password = config_manager.get_password(config.username)
     if not password:
-        p.log_error(_("auth.password_required"))
+        p.log_error(_("auth.password_required", account=config_manager.account))
         sys.exit(1)
 
     p.intro(_("cli.connecting_server"))
 
     auth = None
+    tunnel_info = None
+    recorded_alias = None
     try:
         # Step 1: Authenticate
         p.step(_("prompts.step_auth"))
@@ -226,8 +372,9 @@ def _run_connect(ctx):
         p.step(_("prompts.step_tunnel"))
         p.spinner_message(_("tunnel.fetching"))
         tunnel_manager = TunnelManager(session, config.base_url)
-        tunnel_info = tunnel_manager.get_tunnel_info()
+        tunnel_info = tunnel_manager.get_tunnel_info(config.tunnel_name)
         p.spinner_done(_("prompts.tunnel_found", url=tunnel_info.url))
+        _warn_ambiguous_tunnel(p, tunnel_info, config_manager.account)
 
         # Show connection summary
         ports_str = ", ".join(str(port) for port in config.ports)
@@ -260,20 +407,28 @@ def _run_connect(ctx):
             config, known_hosts_path=config_manager.known_hosts_file
         )
         p.spinner_message(_("ssh.testing_connection"))
-        can_connect = ssh_manager.test_ssh_connection(
-            tunnel_info.hostname, tunnel_info.port
-        )
+        try:
+            can_connect = ssh_manager.test_ssh_connection(
+                tunnel_info.hostname, tunnel_info.port
+            )
+        except ServerUnreachableError:
+            # Only here: a server that was reached and then refused (its
+            # host key, most of all) must never become what the alias
+            # points at
+            recorded_alias = _record_unreached_address(
+                p, ssh_manager, tunnel_info, config.ports
+            )
+            raise
 
         # Bootstrap key access if needed (first connection)
         server_password = None
-        bootstrapped_via_existing = False
         if not can_connect:
             p.spinner_done(_("prompts.first_connection"), success=False)
             p.log_warn(_("warning.first_connection"))
 
             # Our key pair must exist before any upload attempt
             if ssh_manager.generate_ssh_key():
-                p.log_success(_("ssh.key_generated"))
+                p.log_success(_("ssh.key_generated", path=ssh_manager.private_key_path))
 
             # Try existing keys (agent/default) before asking for a password
             p.spinner_message(_("ssh.trying_existing_keys"))
@@ -281,7 +436,6 @@ def _run_connect(ctx):
                 tunnel_info.hostname, tunnel_info.port
             )
             if existing_result is not None:
-                bootstrapped_via_existing = True
                 p.spinner_done(_("ssh.key_uploaded_via_existing"))
             else:
                 p.spinner_done(_("ssh.existing_keys_failed"), success=False)
@@ -297,15 +451,15 @@ def _run_connect(ctx):
         # Step 4: Setup and Connect
         p.step(_("prompts.step_connect"))
 
-        # Generate SSH key if needed
-        key_generated = ssh_manager.generate_ssh_key()
-        if key_generated:
-            p.log_success(_("ssh.key_generated"))
-        else:
+        # A key the server accepts is left alone: nothing is generated, and
+        # no .pub is written next to a key the user brought along
+        if can_connect:
             p.log_info(_("ssh.key_exists", path=ssh_manager.private_key_path))
 
-        # Upload public key with password (existing keys didn't work)
-        if server_password:
+        # Upload public key with password (existing keys didn't work).
+        # An empty password is still tried: servers with PermitEmptyPasswords
+        # accept it, all others reject it with a clear auth error.
+        if server_password is not None:
             p.spinner_message(_("ssh.uploading_key"))
             key_uploaded = ssh_manager.upload_public_key(
                 tunnel_info.hostname, tunnel_info.port, server_password
@@ -316,7 +470,7 @@ def _run_connect(ctx):
                 p.spinner_done(_("warning.ssh_key_exists"))
 
         # Verify connection after any upload
-        if server_password or bootstrapped_via_existing:
+        if not can_connect:
             if not ssh_manager.test_ssh_connection(
                 tunnel_info.hostname, tunnel_info.port
             ):
@@ -332,14 +486,13 @@ def _run_connect(ctx):
             ssh_manager.connect(tunnel_info, config.ports)
         else:
             p.log_info(f"ssh {ssh_manager.host_alias}")
-            p.outro(_("prompts.setup_complete"))
+            command = _connect_command(config_manager.account)
+            p.outro(_("prompts.setup_complete", command=command))
 
-    except TunnelNotFoundError as e:
-        p.log_error(_("error.connection_failed", error=e))
-        _print_server_hint(p)
-        sys.exit(1)
     except (AuthenticationError, TunnelError, SSHError, NetworkError) as e:
         p.log_error(_("error.connection_failed", error=e))
+        auto_picked = tunnel_info if config.tunnel_name is None else None
+        _print_remedy(p, e, config_manager.account, auto_picked, recorded_alias)
         sys.exit(1)
     except ConfigError as e:
         p.log_error(_("error.config", error=e))
@@ -408,20 +561,37 @@ def init(ctx, force, username, server_user, ports):
 
     With -a NAME, creates/reinitializes that account and switches to it
     / 配合 -a 可创建新账户并切换过去
+
+    Re-initializing keeps the settings init does not ask about
+    / 重新初始化会保留未询问的设置（如 tunnel.name、ssh.key_path）
     """
     config_manager = _get_config_manager(ctx)
     p: Prompts = ctx.obj["prompts"]
     skip_confirm = ctx.obj["skip_confirm"]
 
-    # Derived alias must be unique across accounts (host key trust model)
-    derived_alias = (
-        "cpolar-server"
-        if config_manager.account == DEFAULT_ACCOUNT
-        else f"cpolar-{config_manager.account}"
-    )
-    conflict = config_manager.find_alias_conflict(derived_alias)
+    # Re-initializing must not silently reset what init does not ask about
+    # (tunnel.name, SSH key, base URL, language...): start from the old config
+    existing = None
+    if config_manager.config_exists():
+        try:
+            existing = config_manager.get_config()
+        except ConfigError:
+            existing = None
+
+    # A new account derives its alias from its name; either way the alias
+    # must be unique across accounts (host key trust model)
+    if existing is not None:
+        alias = existing.ssh_host_alias
+    elif config_manager.account == DEFAULT_ACCOUNT:
+        alias = "cpolar-server"
+    else:
+        alias = f"cpolar-{config_manager.account}"
+    conflict = config_manager.find_alias_conflict(alias)
     if conflict:
-        p.log_error(_("error.alias_conflict", alias=derived_alias, other=conflict))
+        p.log_error(_("error.alias_conflict", alias=alias, other=conflict))
+        # An account that does not exist yet cannot be given another alias
+        owner = config_manager.account if existing is not None else conflict
+        p.log_hint(_("hint.alias_conflict", account=owner))
         sys.exit(1)
     previous_current = read_current_account() or DEFAULT_ACCOUNT
 
@@ -436,13 +606,8 @@ def init(ctx, force, username, server_user, ports):
 
     p.intro(_("prompts.setup_title"))
 
-    # Respect a custom base_url from an existing config when re-initializing
-    base_url = None
-    if config_manager.config_exists():
-        try:
-            base_url = config_manager.get_config().base_url
-        except ConfigError:
-            base_url = None
+    # Verify credentials against a custom base_url when re-initializing
+    base_url = existing.base_url if existing is not None else None
 
     # Step 1: Cpolar Account (username + password + verification)
     p.step(_("prompts.step_account"))
@@ -547,19 +712,23 @@ def init(ctx, force, username, server_user, ports):
     p.note(summary, _("prompts.summary_config"))
 
     # Create configuration and store password
-    config_data = {
-        "username": username,
-        "server_user": server_user,
-        "ports": ports_list,
-        "auto_connect": auto_connect,
-    }
-    if config_manager.account != DEFAULT_ACCOUNT:
-        config_data["ssh_host_alias"] = derived_alias
+    config_data = existing.model_dump() if existing is not None else {}
+    config_data.update(
+        {
+            "username": username,
+            "server_user": server_user,
+            "ports": ports_list,
+            "auto_connect": auto_connect,
+            "ssh_host_alias": alias,
+        }
+    )
 
     try:
         config_manager.create_config(config_data)
         if password:
             config_manager.set_password(username, password)
+        if existing is not None:
+            p.log_info(_("info.init_kept_settings", account=config_manager.account))
 
         # A freshly initialized account is almost certainly the one to use
         if config_manager.account != previous_current:
@@ -570,7 +739,8 @@ def init(ctx, force, username, server_user, ports):
         p.log_info(_("info.env_password_tip"))
         p.log_info(_("cli.config_saved_path", path=config_manager.config_path))
 
-        p.outro(_("prompts.setup_complete"))
+        command = _connect_command(config_manager.account)
+        p.outro(_("prompts.setup_complete", command=command))
 
     except ConfigError as e:
         p.log_error(_("error.config_create_failed", error=e))
@@ -598,7 +768,7 @@ def config_get(ctx, key):
     p: Prompts = ctx.obj["prompts"]
     try:
         value = config_manager.get(key)
-        p.log(f"{key}: {value}")
+        p.log(f"{key}: {_display_value(value)}")
     except KeyError:
         p.log_error(_("error.config_key_not_found", key=key))
         sys.exit(1)
@@ -628,7 +798,7 @@ def config_set(ctx, key, value):
         try:
             current_value = config_manager.get(key)
         except (KeyError, ConfigError):
-            current_value = "(not set)"
+            current_value = None
 
         # Show change summary
         if not skip_confirm:
@@ -641,7 +811,7 @@ def config_set(ctx, key, value):
 
             summary = f"""\
 {_pad_label(_('label.key') + ':', max_width)} {key}
-{_pad_label(_('label.current') + ':', max_width)} {current_value}
+{_pad_label(_('label.current') + ':', max_width)} {_display_value(current_value)}
 {_pad_label(_('label.new') + ':', max_width)} {value}"""
             p.note(summary, _("prompts.summary_change"))
 
@@ -650,7 +820,43 @@ def config_set(ctx, key, value):
                 return
 
         config_manager.set(key, value)
-        p.log_success(_("cli.config_updated", key=key, value=value))
+        new_value = config_manager.get(key)
+        # Report what was stored where it differs from what was typed: a
+        # blank optional value means unset, text is trimmed or normalized
+        if new_value is None:
+            shown = _display_value(None)
+        elif isinstance(new_value, str):
+            shown = new_value
+        else:
+            shown = value
+        p.log_success(_("cli.config_updated", key=key, value=shown))
+        _note_config_side_effects(p, config_manager, key, current_value, new_value)
+    except KeyError:
+        p.log_error(_("error.config_key_not_found", key=key))
+        sys.exit(1)
+    except ConfigError as e:
+        p.log_error(_("error.config", error=e))
+        sys.exit(1)
+
+
+@config.command("unset")
+@click.argument("key", metavar="KEY")
+@account_option
+@click.help_option("--help", "-h", help="Show help / 显示帮助")
+@click.pass_context
+def config_unset(ctx, key):
+    """Clear an optional configuration value / 清除可选配置项
+
+    KEY: e.g. `tunnel.name` (back to automatic tunnel selection)
+    / 如 `tunnel.name`（恢复自动选择隧道）
+    """
+    config_manager = _get_config_manager(ctx)
+    p: Prompts = ctx.obj["prompts"]
+    try:
+        old_value = config_manager.get(key)
+        config_manager.unset(key)
+        p.log_success(_("cli.config_unset", key=key))
+        _note_config_side_effects(p, config_manager, key, old_value, None)
     except KeyError:
         p.log_error(_("error.config_key_not_found", key=key))
         sys.exit(1)
@@ -707,14 +913,20 @@ def config_show(ctx):
                 + ("中文" if data["language"] == "zh" else "English")
             )
 
-            table.add_row(_("config.account"), config_manager.account)
-            table.add_row(_("config.username"), data["username"])
-            table.add_row(_("config.base_url"), data["base_url"])
-            table.add_row(_("config.server_user"), data["server_user"])
+            # Values are free-form text: escape them so "[...]" is not
+            # read as Rich markup
+            table.add_row(_("config.account"), escape(config_manager.account))
+            table.add_row(_("config.username"), escape(data["username"]))
+            table.add_row(_("config.base_url"), escape(data["base_url"]))
+            table.add_row(
+                _("config.tunnel_name"),
+                escape(data["tunnel_name"] or _("config.tunnel_name_auto")),
+            )
+            table.add_row(_("config.server_user"), escape(data["server_user"]))
             table.add_row(_("config.ports"), ", ".join(str(p) for p in data["ports"]))
             table.add_row(_("config.auto_connect"), yes_no)
-            table.add_row(_("config.ssh_key_path"), data["ssh_key_path"])
-            table.add_row(_("config.ssh_host_alias"), data["ssh_host_alias"])
+            table.add_row(_("config.ssh_key_path"), escape(data["ssh_key_path"]))
+            table.add_row(_("config.ssh_host_alias"), escape(data["ssh_host_alias"]))
             table.add_row(_("config.ssh_key_size"), f"{data['ssh_key_size']} bits")
             table.add_row(_("config.log_level"), data["log_level"])
             table.add_row(
@@ -726,11 +938,11 @@ def config_show(ctx):
             # Password status
             status_key = f"config.password_{data['password_status']}"
             console.print(f"\n{_('config.password_status')}: {_(status_key)}")
-            console.print(f"{_('config.config_dir')}: {data['config_dir']}")
+            console.print(f"{_('config.config_dir')}: {escape(data['config_dir'])}")
 
     except ConfigError as e:
         p.log_error(_("error.config", error=e))
-        p.log_info(_("info.run_init"))
+        p.log_hint(_("info.run_init", account=config_manager.account))
         sys.exit(1)
 
 
@@ -848,10 +1060,11 @@ def account_list(ctx):
     table.add_column(_("account.column.alias"), style="white")
     table.add_column(_("account.column.current"), justify="center")
     for info in accounts:
+        # Raw file contents: a hand-edited config may hold null or a number
         table.add_row(
-            info["name"],
-            info["username"],
-            info["ssh_host_alias"],
+            escape(info["name"]),
+            escape(str(info["username"] or "")),
+            escape(str(info["ssh_host_alias"] or "")),
             "✓" if info["is_current"] else "",
         )
     console.print(table)
@@ -989,7 +1202,7 @@ def status_cmd(ctx):
         if output_format == "json":
             print(json.dumps({"error": "config_not_found"}))
         else:
-            p.log_warn(_("cli.no_config"))
+            p.log_warn(_("cli.no_config", account=config_manager.account))
         sys.exit(1)
 
     def _output_json(config, tunnel_info=None, online=False, error=None):
@@ -1008,11 +1221,7 @@ def status_cmd(ctx):
             },
         }
         if tunnel_info:
-            data["tunnel"] = {
-                "url": tunnel_info.url,
-                "hostname": tunnel_info.hostname,
-                "port": tunnel_info.port,
-            }
+            data["tunnel"] = tunnel_info.to_dict()
         if error:
             data["error"] = str(error)
         print(json.dumps(data, indent=2))
@@ -1023,7 +1232,8 @@ def status_cmd(ctx):
         mode = _("status.mode.remote") if not local_only else _("status.mode.local")
         title = _("status.title")
         if reason_msg and local_only:
-            console.print(Panel.fit(reason_msg, style="yellow", title=title))
+            # Error text and tunnel names may contain "[...]"
+            console.print(Panel.fit(escape(reason_msg), style="yellow", title=title))
         else:
             console.print(
                 Panel.fit(
@@ -1034,18 +1244,20 @@ def status_cmd(ctx):
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column(_("status.column.field"), style="cyan", width=22)
         table.add_column(_("status.column.value"), style="white")
-        table.add_row(_("status.field.account"), config_manager.account)
+        table.add_row(_("status.field.account"), escape(config_manager.account))
         if tunnel_info is not None:
-            table.add_row(_("status.field.tunnel"), getattr(tunnel_info, "url", ""))
-            table.add_row(_("status.field.host"), getattr(tunnel_info, "hostname", ""))
-            table.add_row(_("status.field.port"), str(getattr(tunnel_info, "port", "")))
+            table.add_row(_("status.field.tunnel_name"), escape(tunnel_info.name))
+            table.add_row(_("status.field.tunnel"), escape(tunnel_info.url))
+            table.add_row(_("status.field.host"), escape(tunnel_info.hostname))
+            table.add_row(_("status.field.port"), str(tunnel_info.port))
         else:
             table.add_row(_("status.field.tunnel"), _("status.tunnel.unknown"))
             table.add_row(_("status.field.host"), "-")
             table.add_row(_("status.field.port"), "-")
-        table.add_row(_("status.field.ssh_alias"), config.ssh_host_alias)
+        table.add_row(_("status.field.ssh_alias"), escape(config.ssh_host_alias))
         table.add_row(
-            _("status.field.ssh_key"), os.path.expanduser(config.ssh_key_path)
+            _("status.field.ssh_key"),
+            escape(os.path.expanduser(config.ssh_key_path)),
         )
         yes_no = _("prompts.yes") if config.auto_connect else _("prompts.no")
         table.add_row(_("status.field.auto_connect"), yes_no)
@@ -1079,15 +1291,18 @@ def status_cmd(ctx):
                 with console.status(f"[yellow]{_('tunnel.fetching')}[/yellow]"):
                     tunnel_info = TunnelManager(
                         session, config.base_url
-                    ).get_tunnel_info()
+                    ).get_tunnel_info(config.tunnel_name)
             else:
                 session = auth.login()
-                tunnel_info = TunnelManager(session, config.base_url).get_tunnel_info()
+                tunnel_info = TunnelManager(session, config.base_url).get_tunnel_info(
+                    config.tunnel_name
+                )
 
             if output_format == "json":
                 _output_json(config, tunnel_info=tunnel_info, online=True)
             else:
                 _render(config, tunnel_info=tunnel_info, local_only=False)
+                _warn_ambiguous_tunnel(p, tunnel_info, config_manager.account)
         except AuthenticationError as e:
             if output_format == "json":
                 _output_json(config, online=False, error=f"auth_failed: {e}")
@@ -1103,7 +1318,7 @@ def status_cmd(ctx):
                 _output_json(config, online=False, error=f"tunnel_not_found: {e}")
             else:
                 _render(config, tunnel_info=None, local_only=True, reason_msg=str(e))
-                _print_server_hint(p)
+                _print_remedy(p, e, config_manager.account)
         except (TunnelError, NetworkError) as e:
             if output_format == "json":
                 _output_json(config, online=False, error=f"network_failed: {e}")

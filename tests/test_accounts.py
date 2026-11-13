@@ -110,6 +110,7 @@ def test_write_current_is_atomic(monkeypatch, isolated_home):
 # ---------- Task 2: ConfigManager per-account paths ----------
 
 import stat
+import sys
 
 from cpolar_connect.config import ConfigManager
 
@@ -129,7 +130,8 @@ def test_paths_land_in_account_dir(isolated_home):
         isolated_home / ".cpolar_connect" / "accounts" / "work" / "config.json"
     )
     assert cm.config_file.exists()
-    assert stat.S_IMODE(cm.account_dir.stat().st_mode) == 0o700
+    if sys.platform != "win32":  # no POSIX permission bits on Windows
+        assert stat.S_IMODE(cm.account_dir.stat().st_mode) == 0o700
 
 
 def test_constructor_rejects_bad_name(isolated_home):

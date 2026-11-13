@@ -82,6 +82,11 @@ class CpolarConfig(BaseModel):
     # Cpolar settings
     username: str = Field(..., description="Cpolar username/email")
     base_url: str = Field(default=DEFAULT_BASE_URL, description="Cpolar base URL")
+    tunnel_name: Optional[str] = Field(
+        default=None,
+        description="Dashboard tunnel to use when several machines share the "
+        "cpolar account (default: first SSH tunnel)",
+    )
 
     # Server settings
     server_user: str = Field(..., description="Remote server username")
@@ -108,6 +113,24 @@ class CpolarConfig(BaseModel):
         for port in v:
             if not (1 <= port <= 65535):
                 raise ValueError(f"Invalid port: {port}. Must be between 1-65535")
+        return v
+
+    @field_validator("tunnel_name")
+    @classmethod
+    def validate_tunnel_name(cls, v: Optional[str]) -> Optional[str]:
+        """Blank means unset: fall back to the first SSH tunnel."""
+        if v is None:
+            return None
+        return v.strip() or None
+
+    @field_validator("server_user")
+    @classmethod
+    def validate_server_user(cls, v: str) -> str:
+        """The user name is written into ~/.ssh/config and passed to ssh
+        as `user@host`; keep it from reading as an option or a new line."""
+        v = v.strip()
+        if v.startswith("-") or any(ord(ch) < 32 or ord(ch) == 127 for ch in v):
+            raise ValueError(f"Invalid server user: {v!r}")
         return v
 
     @field_validator("ssh_key_size")
@@ -284,13 +307,15 @@ class ConfigManager:
         if not ssh_config.exists():
             return
         try:
-            content = ssh_config.read_text(encoding="utf-8")
+            # The user's file need not be UTF-8: other bytes pass through
+            content = ssh_config.read_text(encoding="utf-8", errors="surrogateescape")
             needle = f"UserKnownHostsFile {old_path}"
             if needle not in content:
                 return
             ssh_config.write_text(
                 content.replace(needle, f"UserKnownHostsFile {new_path}"),
                 encoding="utf-8",
+                errors="surrogateescape",
             )
             logger.info("Rewrote UserKnownHostsFile path in ~/.ssh/config")
         except OSError as e:
@@ -384,6 +409,11 @@ class ConfigManager:
 
     def set(self, key: str, value: Any) -> None:
         """Set configuration value and save"""
+        # Under either spelling of the key: an empty path would be read as
+        # the current directory
+        if key.replace(".", "_") == "ssh_key_path" and not str(value).strip():
+            raise ConfigError(_("error.ssh_key_path_empty"))
+
         config = self.get_config()
         config_dict = config.model_dump()
 
@@ -468,10 +498,31 @@ class ConfigManager:
             raise ConfigError(_("config.invalid", error=e))
         self.save_config(updated_config)
 
+    # Settings that may be left unset
+    _OPTIONAL_SETTINGS = {"tunnel_name"}
+
+    def unset(self, key: str) -> None:
+        """Clear an optional setting so its default behavior applies again"""
+        # Like get() and set(): "tunnel.name" and "tunnel_name" are one setting
+        attr = key.replace(".", "_")
+        if attr not in self._OPTIONAL_SETTINGS:
+            self.get(key)  # KeyError for an unknown key
+            raise ConfigError(
+                _("error.config_key_required", key=key, account=self.account)
+            )
+
+        config_dict = self.get_config().model_dump()
+        config_dict[attr] = None
+        try:
+            updated_config = CpolarConfig(**config_dict)
+        except ValidationError as e:
+            raise ConfigError(_("config.invalid", error=e))
+        self.save_config(updated_config)
+
     def edit(self) -> None:
         """Open configuration file in a reasonable editor per platform"""
         if not self.config_exists():
-            raise ConfigError(_("cli.no_config"))
+            raise ConfigError(_("cli.no_config", account=self.account))
 
         editor = os.environ.get("EDITOR")
         argv = None
@@ -505,6 +556,7 @@ class ConfigManager:
             "account": self.account,
             "username": config.username,
             "base_url": config.base_url,
+            "tunnel_name": config.tunnel_name,
             "server_user": config.server_user,
             "ports": config.ports,
             "auto_connect": config.auto_connect,

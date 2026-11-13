@@ -170,6 +170,15 @@ cpolar-connect config set server.user root
 # Change ports
 cpolar-connect config set server.ports 8080,3000
 
+# Several machines on one cpolar account: pick the tunnel by name (see the cpolar dashboard)
+cpolar-connect config set tunnel.name ssh
+# Back to picking the first SSH tunnel automatically
+cpolar-connect config unset tunnel.name
+
+# Use a key the server already accepts and skip the key upload (~/.ssh/id_ed25519 as an example).
+# The file must already exist and be an RSA/Ed25519/ECDSA key without a passphrase; a wrong path is pointed out
+cpolar-connect config set ssh.key_path ~/.ssh/id_ed25519
+
 # Edit config file directly
 cpolar-connect config edit
 ```
@@ -220,7 +229,7 @@ Since v0.2.4, the tool verifies the server's SSH host key to prevent man-in-the-
 
 - On first connection the server host key is recorded in `~/.cpolar_connect/accounts/<account>/known_hosts` (TOFU, keyed by the SSH alias, unaffected by tunnel address changes)
 - Every subsequent connection (including key tests and public key uploads) verifies against it; a mismatch refuses the connection
-- If the host key legitimately changed (e.g., server reinstall), reset it and reconnect:
+- If the host key legitimately changed (a server reinstall, or an account pointed at a different machine, e.g. by changing `tunnel.name`), reset it and reconnect (add `-a <account>` for a non-current account):
 
 ```bash
 cpolar-connect config clear-hostkey
@@ -243,6 +252,7 @@ cpc account remove work   # Remove an account (also cleans its SSH config block)
 - Account resolution priority: `-a` flag > `CPOLAR_ACCOUNT` env var > current account > `default`
 - Legacy single-account configs migrate automatically into the `default` account on first run — no action needed
 - Note: `CPOLAR_PASSWORD` applies to ALL accounts; unset it if accounts use different passwords
+- When several machines share one cpolar account, set `tunnel.name` per account (e.g. `cpc -a work config set tunnel.name ssh`); otherwise every account connects to the first SSH tunnel (a warning is shown when there are several). Two machines whose tunnels share a name cannot be told apart by `tunnel.name`: rename the tunnel in one machine's cpolar configuration
 - Known limitation: PyPI hosts an unrelated `cpc` package (competitive programming tool). If you have it installed, pipx/uv tool installs of this tool need `--force` due to the command name clash; the primary `cpolar-connect` entry is unaffected
 
 ## 📚 Use Cases
@@ -304,6 +314,7 @@ cpolar-connect doctor
 | SSH Config | ~/.ssh/config entry |
 | Cpolar Auth | Account verification |
 | Tunnel Status | Active tunnel detection |
+| Tunnel DNS | Whether the tunnel's host name resolves on this network |
 
 ## ❓ FAQ
 
@@ -312,6 +323,13 @@ cpolar-connect doctor
 2. Check cpolar is running on server: `sudo systemctl status cpolar`
 3. Verify username and password are correct
 4. View detailed logs: `CPOLAR_LOG_LEVEL=DEBUG cpolar-connect`
+
+### "Cannot resolve the tunnel's host name"?
+Some networks (certain campus or corporate networks, for example) do not resolve tunnel host names. Connecting then fails with "Cannot resolve the tunnel's host name", and the "Tunnel DNS" check of `cpolar-connect doctor` fails as well. The server is not the cause. You can:
+- retry on another network (a phone hotspot, say) or with another DNS server; or
+- look up the name's address by other means, put it in the hosts file, and retry.
+
+Even when the connection fails, the address in `~/.ssh/config` is updated to the tunnel's current one (unless several SSH tunnels share the cpolar account and no `tunnel.name` is set). Scripts can get the current host name from `cpolar-connect -f json status`: it is `tunnel.hostname` in the output.
 
 ### How to uninstall?
 ```bash
