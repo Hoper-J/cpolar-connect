@@ -55,7 +55,8 @@ uv run pytest tests/ -v
 | `├─ test_verify_credentials.py` | Init-time credential verification |
 | `├─ test_status_local_only.py` | Status command tests |
 | `└─ e2e/test_real_sshd.py` | Connect flow against a real sshd (opt-in via `CPOLAR_E2E_*`, run by CI) |
-| `.github/workflows/ci.yml` | CI: format check, tests on Linux/macOS/Windows (Python 3.8 & 3.13), end-to-end tests against Linux and Windows sshd |
+| `.github/workflows/ci.yml` | CI: format check, tests on Linux/macOS/Windows (Python 3.8 & 3.13), end-to-end tests against Linux and Windows sshd; installs the versions pinned in `uv.lock` |
+| `.github/workflows/newest-deps.yml` | The unit tests against the newest dependency versions the requirements allow (what a fresh install gets), on Linux and Windows, on every push and weekly |
 | `docs/` | Documentation directory |
 
 ## Development Commands
@@ -126,6 +127,8 @@ The project follows a modular architecture under `src/cpolar_connect/`:
 - Logs: `~/.cpolar_connect/logs/cpolar.log` (shared across accounts)
 
 ### Key Dependencies
+`pyproject.toml` states lower bounds only, so an installation gets the newest releases, while `uv.lock` pins what CI and `uv run` use. The two drift apart as upstream releases: `newest-deps.yml` runs the tests against the newest versions every week, and `uv lock --upgrade` brings the lock up to date (it upgrades the tools as well; when a new black formats differently, reformat in the same commit, and note that black's version depends on the Python version, the format check being the one of Python 3.13). No upper bounds unless a release is known to break something.
+
 - **paramiko** (≥ 3.2, for `transport_factory`): SSH operations and key management
 - **cryptography**: reads PKCS#8 private keys, which paramiko cannot
 - **requests/beautifulsoup4**: Web scraping cpolar dashboard
