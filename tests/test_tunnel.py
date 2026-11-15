@@ -197,8 +197,7 @@ class TestTunnelNotFound:
 
 def _status_page(*rows):
     """A status table in the dashboard's layout, from (name, url, local) rows."""
-    body = "".join(
-        f"""
+    body = "".join(f"""
   <tr>
    <td>{name}</td>
    <th scope="row">
@@ -207,9 +206,7 @@ def _status_page(*rows):
    <td>cn_vip</td>
    <td>{local}</td>
    <td>2026-11-09 11:02:17 +0800 CST</td>
-  </tr>"""
-        for name, url, local in rows
-    )
+  </tr>""" for name, url, local in rows)
     return f"""
 <table class="table table-sm">
  <thead>

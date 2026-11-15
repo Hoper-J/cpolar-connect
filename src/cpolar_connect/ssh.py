@@ -315,9 +315,7 @@ def _is_windows_server(ssh: paramiko.SSHClient) -> bool:
 # appended straight after its last line break. The shared file
 # gets the access rights sshd insists on (administrators and SYSTEM only,
 # named by their well-known SIDs so that it works in every display language).
-_WINDOWS_INSTALL_SCRIPT = "\n".join(
-    line.strip()
-    for line in r"""
+_WINDOWS_INSTALL_SCRIPT = "\n".join(line.strip() for line in r"""
     $ErrorActionPreference = 'Stop'
     function Report($status, $detail) {
         $bytes = [Text.Encoding]::UTF8.GetBytes([string]$detail)
@@ -364,8 +362,7 @@ _WINDOWS_INSTALL_SCRIPT = "\n".join(
         Report 'failed' $_.Exception.Message
         exit 1
     }
-    """.strip().splitlines()
-)
+    """.strip().splitlines())
 
 _WINDOWS_REPORT = re.compile(
     r"^cpolar-connect: (installed|present|failed) ([A-Za-z0-9+/=]*)\s*$", re.M

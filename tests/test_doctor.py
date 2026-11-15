@@ -251,7 +251,7 @@ def test_advice_for_another_account_names_that_account(monkeypatch, tmp_path):
 
     assert doctor.check_config() is False
     doctor.add_check(_("doctor.check.password"), False, "missing")
-    ((_name, _passed, message, _level), _password) = doctor.checks
+    (_name, _passed, message, _level), _password = doctor.checks
     advice = "\n".join(doctor._recommendations())
 
     assert "cpolar-connect -a work init" in message
