@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.1] - 2026-11-15
 
 ### ✨ 新特性 / New Features
 - 新增按账户的 `tunnel.name`：按 cpolar 控制台上的隧道名称选择隧道，多台机器可以共用一个 cpolar 账号；存在其他 SSH 隧道、同名隧道或指定的名称不在线时给出提示和修复命令；新增 `config unset` / New per-account `tunnel.name` picks a tunnel by its dashboard name, so several machines can share one cpolar login; other SSH tunnels, same-named tunnels and a name that is not online are reported together with the command that fixes them; new `config unset`
